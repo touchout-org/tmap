@@ -12,3 +12,9 @@ Derived from the "Unique streets" view built in the OSM Data Mine experiment (se
 * Pedestrian/path classes (suppressed only when paired with a roadway of the same name): `footway`, `path`, `cycleway`, `pedestrian`, `steps`.
 
 This is a starting point, not a final decision — to be revisited as more of the app's actual requirements (e.g. whether sidewalks need to be represented separately for wayfinding purposes even when paired with a road) become clear.
+
+## Known open observation: divided-road segments are drawn as separate parallel ways
+
+For divided/dual-carriageway streets (e.g. University Ave, Bancroft Way, MLK Jr. Way in the Berkeley test data), OSM correctly maps each direction of travel as its own separate way rather than one way per block — so a single visual block can produce multiple ways sharing the same name, running parallel and offset by a small distance (the median width).
+
+**Decision for now: leave this alone.** Unlike the sidewalk/footway case, these parallel ways aren't being filtered or merged. It's not yet clear this causes a real problem for a tactile map — the redundant parallel lines may simply render as a slightly thicker/doubled line at low zoom, and at higher zoom could actually be a useful feature (revealing that a street is physically divided). A candidate low-effort fix was discussed if it does turn out to be a problem: snap each segment's midpoint to a coarse grid (using geometry already fetched via `out geom;`) and treat same-named segments with matching rounded midpoints as one block — purely client-side, no new queries, but a heuristic (can misfire on sharp curves or unusually wide medians). Revisit once we can see how this actually renders on a tactile display.
