@@ -54,3 +54,12 @@ out tags;
 
 * **Footer text** — "End of page" is the literal intended visible footer text.
 * **Ambiguous geocoding matches** — auto-pick Nominatim's first/top-ranked result. Print the matched location's display name at the top of the Results section, above the street list, so it's clear what was actually queried. If it's wrong, the user reruns with a more specific search string.
+
+## Data views (footer tabs)
+
+The footer holds a radio-button group ("Data view") that switches how the already-fetched street data above is rendered, with no re-query against Nominatim/Overpass — switching tabs just re-renders the last result set.
+
+* **Overview** (default, selected on load) — the original behavior described above: expanding a street reveals its full set of tag keys, each expandable to its value(s).
+* **Highway** — expanding a street reveals, directly, the distinct values found in the `highway` tag across that street's segments, one per list item, each annotated with a count of how many segments carry that value (e.g. `residential (5)`, `tertiary (3)`). Values are deduplicated and sorted alphabetically; a count of 1 is still shown for consistency.
+
+More views may be added to this tab set later.

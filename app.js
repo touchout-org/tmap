@@ -7,6 +7,9 @@ const input = document.getElementById('location-input');
 const statusMessage = document.getElementById('status-message');
 const matchedLocation = document.getElementById('matched-location');
 const streetList = document.getElementById('street-list');
+const viewInputs = document.querySelectorAll('input[name="view"]');
+
+let lastWays = [];
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -15,6 +18,18 @@ form.addEventListener('submit', (event) => {
     runSearch(query);
   }
 });
+
+viewInputs.forEach((viewInput) => {
+  viewInput.addEventListener('change', () => {
+    if (lastWays.length) {
+      renderStreets(lastWays);
+    }
+  });
+});
+
+function getSelectedView() {
+  return document.querySelector('input[name="view"]:checked').value;
+}
 
 async function runSearch(query) {
   clearResults();
@@ -96,6 +111,10 @@ function groupByStreetName(ways) {
 }
 
 function renderStreets(ways) {
+  lastWays = ways;
+  streetList.innerHTML = '';
+
+  const view = getSelectedView();
   const groups = groupByStreetName(ways);
   const names = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
 
@@ -106,10 +125,28 @@ function renderStreets(ways) {
     const summary = document.createElement('summary');
     summary.textContent = segments.length > 1 ? `${name} (${segments.length} segments)` : name;
     details.appendChild(summary);
-    details.appendChild(buildAttributeList(segments));
+    details.appendChild(view === 'highway' ? buildHighwayValueList(segments) : buildAttributeList(segments));
     li.appendChild(details);
     streetList.appendChild(li);
   }
+}
+
+function buildHighwayValueList(segments) {
+  const counts = new Map();
+  for (const seg of segments) {
+    const value = seg.tags && seg.tags.highway;
+    if (!value) continue;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  }
+  const sortedValues = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b));
+
+  const ul = document.createElement('ul');
+  for (const value of sortedValues) {
+    const li = document.createElement('li');
+    li.textContent = `${value} (${counts.get(value)})`;
+    ul.appendChild(li);
+  }
+  return ul;
 }
 
 function buildAttributeList(segments) {
@@ -153,6 +190,7 @@ function setStatus(text) {
 }
 
 function clearResults() {
+  lastWays = [];
   matchedLocation.textContent = '';
   streetList.innerHTML = '';
 }
