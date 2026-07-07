@@ -1,8 +1,14 @@
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
-const RADIUS_METERS = 804.672; // 0.5 miles
 const REVERSE_GEOCODE_DELAY_MS = 1100; // stay under Nominatim's ~1 req/sec usage policy
+
+const MILES_TO_METERS = 1609.344;
+const HALF_WIDTH_METERS = 0.3 * MILES_TO_METERS; // east/west of the target address
+const HALF_HEIGHT_METERS = 0.2 * MILES_TO_METERS; // north/south of the target address
+
+const SVG_WIDTH = 600; // matches DotSVG's 600x400 canvas (10:1 over the 60x40 dot grid)
+const SVG_HEIGHT = 400;
 
 const ROADWAY_HIGHWAY_VALUES = new Set([
   'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
@@ -16,8 +22,11 @@ const statusMessage = document.getElementById('status-message');
 const matchedLocation = document.getElementById('matched-location');
 const streetList = document.getElementById('street-list');
 const viewInputs = document.querySelectorAll('input[name="view"]');
+const copySvgBtn = document.getElementById('copy-svg-btn');
+const copySvgStatus = document.getElementById('copy-svg-status');
 
 let lastWays = [];
+let lastBbox = null;
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -33,6 +42,21 @@ viewInputs.forEach((viewInput) => {
       renderResults(lastWays);
     }
   });
+});
+
+copySvgBtn.addEventListener('click', async () => {
+  if (!lastWays.length || !lastBbox) {
+    copySvgStatus.textContent = 'No street data to copy yet -- run a search first.';
+    return;
+  }
+
+  const svgText = buildSvgDocument(lastWays, lastBbox);
+  try {
+    await navigator.clipboard.writeText(svgText);
+    copySvgStatus.textContent = 'SVG copied to clipboard.';
+  } catch (err) {
+    copySvgStatus.textContent = 'Could not copy SVG to clipboard.';
+  }
 });
 
 function getSelectedView() {
@@ -60,7 +84,8 @@ async function runSearch(query) {
 
   let ways;
   try {
-    const bbox = boundingBox(parseFloat(place.lat), parseFloat(place.lon), RADIUS_METERS);
+    const bbox = boundingBox(parseFloat(place.lat), parseFloat(place.lon));
+    lastBbox = bbox;
     ways = await fetchWays(bbox);
   } catch (err) {
     setStatus('There was a problem retrieving street data from OpenStreetMap. Please try again.');
@@ -76,10 +101,10 @@ async function runSearch(query) {
   renderResults(ways);
 }
 
-function boundingBox(lat, lon, radiusMeters) {
+function boundingBox(lat, lon) {
   const metersPerDegreeLat = 111320;
-  const latDelta = radiusMeters / metersPerDegreeLat;
-  const lonDelta = radiusMeters / (metersPerDegreeLat * Math.cos((lat * Math.PI) / 180));
+  const latDelta = HALF_HEIGHT_METERS / metersPerDegreeLat;
+  const lonDelta = HALF_WIDTH_METERS / (metersPerDegreeLat * Math.cos((lat * Math.PI) / 180));
   return {
     south: lat - latDelta,
     north: lat + latDelta,
@@ -359,6 +384,49 @@ function setStatus(text) {
 
 function clearResults() {
   lastWays = [];
+  lastBbox = null;
   matchedLocation.textContent = '';
   streetList.innerHTML = '';
+  copySvgStatus.textContent = '';
+}
+
+function projectToSvg(lat, lon, bbox) {
+  const x = ((lon - bbox.west) / (bbox.east - bbox.west)) * SVG_WIDTH;
+  const y = ((bbox.north - lat) / (bbox.north - bbox.south)) * SVG_HEIGHT;
+  return { x, y };
+}
+
+function wayToPolylinePoints(way, bbox) {
+  return (way.geometry || [])
+    .map((point) => {
+      const { x, y } = projectToSvg(point.lat, point.lon, bbox);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
+}
+
+function escapeXmlAttribute(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function buildSvgDocument(ways, bbox) {
+  const polylines = ways
+    .filter((way) => (way.geometry || []).length >= 2)
+    .map((way, index) => {
+      const name = (way.tags && way.tags.name) || '';
+      const id = `segment${String(index + 1).padStart(3, '0')}`;
+      const points = wayToPolylinePoints(way, bbox);
+      return `  <polyline data-name="${escapeXmlAttribute(name)}" id="${id}" points="${points}" fill="none" stroke="black" stroke-width="10"/>`;
+    });
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_WIDTH} ${SVG_HEIGHT}" width="${SVG_WIDTH}" height="${SVG_HEIGHT}">`,
+    ...polylines,
+    '</svg>'
+  ].join('\n');
 }

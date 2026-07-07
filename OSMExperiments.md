@@ -24,7 +24,7 @@ This HTML and JS site is hosted on GitHub Pages with no backend — all API call
 
 **Geocoding:** OSM Nominatim only for this experiment (CORS-friendly for a static site, no API key/billing to manage). Google Geocoding/Places was considered but deferred.
 
-**Street data query:** Overpass API, queried against a bounding box of roughly 0.5 miles around the geocoded point (not a true circular radius, for simplicity).
+**Street data query:** Overpass API, queried against a bounding box **0.3 miles east and west, and 0.2 miles north and south** of the geocoded point (not a true circular radius, for simplicity) — a 0.6mi × 0.4mi rectangle centered on the target address. This 3:2 aspect ratio is deliberate: it matches DotSVG's 600×400 canvas exactly (see "SVG export" below), so the bbox maps onto that canvas with no distortion.
 
 Query shape:
 ```
@@ -76,3 +76,13 @@ The footer holds a radio-button group ("Data view") that switches how the alread
   * Displayed address text is deliberately narrowed to just **house number + road** (e.g. "1901 University Avenue"), dropping everything else from Nominatim's structured `address` object — this tab is only trying to answer "what address is at this endpoint," not display a full address.
 
 More views may be added to this tab set later.
+
+## SVG export ("Copy SVG" button)
+
+A standalone "Copy SVG" button in the footer (not tied to any Data view tab) converts the *entire* last-fetched result set (`lastWays`, unfiltered by any tab-specific logic like Unique streets' pedestrian suppression) into an SVG document and writes it to the clipboard, formatted for DotSVG (the KGS DotPad drawing app at `C:\Users\joshu\Dropbox\DOTPad\`):
+
+* Each way becomes one `<polyline>` (open line, not a closed `<polygon>`) — this matches DotSVG's own convention for open hand-drawn paths (see its `points`-based polyline output when a path is left unclosed).
+* `points` coordinates are a linear (equirectangular) projection of each node's lat/lon onto DotSVG's fixed 600×400 canvas, using the bbox edges as the projection bounds: longitude → x (`0`–`600`), latitude → y (`0`–`400`, inverted since latitude increases northward but SVG y increases downward). This is only reasonable because the bbox is small (0.6mi × 0.4mi) and now matches the canvas's 3:2 aspect ratio exactly.
+* Each polyline gets `data-name="<street name>"` (plus a unique `id` for DOM validity) — DotSVG's own `shapeName()` reads `data-name` first when deciding what to speak/display on the message line as the cursor crosses a shape, so this makes hovering a segment announce **just the street name**, nothing else.
+* Street names are XML-escaped in the `data-name`/attribute output (handles names like "Hearst Avenue & Arch Street").
+* Known caveat, not yet addressed: a way that only partially crosses the bbox still comes back from Overpass with its *complete* geometry, so some of its projected points can fall outside the 0–600 / 0–400 viewBox (negative or over-large coordinates). Not clipped for now.
