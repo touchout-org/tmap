@@ -2,6 +2,12 @@ const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const RADIUS_METERS = 804.672; // 0.5 miles
 
+const ROADWAY_HIGHWAY_VALUES = new Set([
+  'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
+  'unclassified', 'residential', 'living_street', 'service'
+]);
+const PEDESTRIAN_HIGHWAY_VALUES = new Set(['footway', 'path', 'cycleway', 'pedestrian', 'steps']);
+
 const form = document.getElementById('search-form');
 const input = document.getElementById('location-input');
 const statusMessage = document.getElementById('status-message');
@@ -117,18 +123,40 @@ function renderStreets(ways) {
   const view = getSelectedView();
   const groups = groupByStreetName(ways);
   const names = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+  const roadwayNames = view === 'unique-streets' ? computeRoadwayNames(ways) : null;
 
   for (const name of names) {
-    const segments = groups.get(name);
+    let segments = groups.get(name);
+    if (view === 'unique-streets') {
+      segments = filterPairedPedestrianSegments(name, segments, roadwayNames);
+    }
+
     const li = document.createElement('li');
     const details = document.createElement('details');
     const summary = document.createElement('summary');
     summary.textContent = segments.length > 1 ? `${name} (${segments.length} segments)` : name;
     details.appendChild(summary);
-    details.appendChild(view === 'highway' ? buildHighwayValueList(segments) : buildAttributeList(segments));
+    details.appendChild(view === 'overview' ? buildAttributeList(segments) : buildHighwayValueList(segments));
     li.appendChild(details);
     streetList.appendChild(li);
   }
+}
+
+function computeRoadwayNames(ways) {
+  const names = new Set();
+  for (const way of ways) {
+    const name = way.tags && way.tags.name;
+    const highway = way.tags && way.tags.highway;
+    if (name && ROADWAY_HIGHWAY_VALUES.has(highway)) {
+      names.add(name);
+    }
+  }
+  return names;
+}
+
+function filterPairedPedestrianSegments(name, segments, roadwayNames) {
+  if (!roadwayNames.has(name)) return segments;
+  return segments.filter((seg) => !PEDESTRIAN_HIGHWAY_VALUES.has(seg.tags && seg.tags.highway));
 }
 
 function buildHighwayValueList(segments) {

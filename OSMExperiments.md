@@ -61,5 +61,8 @@ The footer holds a radio-button group ("Data view") that switches how the alread
 
 * **Overview** (default, selected on load) — the original behavior described above: expanding a street reveals its full set of tag keys, each expandable to its value(s).
 * **Highway** — expanding a street reveals, directly, the distinct values found in the `highway` tag across that street's segments, one per list item, each annotated with a count of how many segments carry that value (e.g. `residential (5)`, `tertiary (3)`). Values are deduplicated and sorted alphabetically; a count of 1 is still shown for consistency.
+* **Unique streets** — same street list, but for any street name that has at least one "roadway"-class segment, segments tagged with a "pedestrian/path"-class `highway` value are dropped before display (a sidewalk/footway sharing a road's name is treated as redundant with the road it runs alongside). Street names with no roadway-class segment at all (a standalone path/greenway not paired with any road of the same name) are left untouched. The segment count in the summary line reflects the filtered count, not the original total. Expanding a street shows the same highway-value/count breakdown as the Highway tab, computed from the filtered segments.
+  * Roadway classes: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `unclassified`, `residential`, `living_street`, `service`.
+  * Pedestrian/path classes (eligible for suppression when paired with a roadway of the same name): `footway`, `path`, `cycleway`, `pedestrian`, `steps`.
 
 More views may be added to this tab set later.
