@@ -56,7 +56,7 @@ async function runSearch(query) {
     return;
   }
 
-  matchedLocation.textContent = `Matched location: ${place.display_name}`;
+  matchedLocation.textContent = `Matched location: ${formatMatchedLocation(place)}`;
 
   let ways;
   try {
@@ -89,11 +89,29 @@ function boundingBox(lat, lon, radiusMeters) {
 }
 
 async function geocode(query) {
-  const url = `${NOMINATIM_URL}?format=json&q=${encodeURIComponent(query)}&limit=1`;
+  const url = `${NOMINATIM_URL}?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error('geocode-failed');
   const data = await res.json();
   return data.length ? data[0] : null;
+}
+
+function formatMatchedLocation(place) {
+  const address = place.address || {};
+  const parts = [];
+
+  if (place.name) parts.push(place.name);
+
+  const streetLine = [address.house_number, address.road].filter(Boolean).join(' ');
+  if (streetLine) parts.push(streetLine);
+
+  const city = address.city || address.town || address.village;
+  if (city) parts.push(city);
+
+  if (address.state) parts.push(address.state);
+  if (address.postcode) parts.push(address.postcode);
+
+  return parts.length ? parts.join(', ') : place.display_name;
 }
 
 async function fetchWays(bbox) {
@@ -236,11 +254,11 @@ function reverseGeocode(lat, lon) {
 
   const resultPromise = geocodeQueue.then(async () => {
     try {
-      const url = `${NOMINATIM_REVERSE_URL}?format=json&lat=${lat}&lon=${lon}&zoom=18`;
+      const url = `${NOMINATIM_REVERSE_URL}?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) throw new Error('reverse-geocode-failed');
       const data = await res.json();
-      return data && data.display_name ? data.display_name : 'no address found';
+      return formatShortAddress(data);
     } catch (err) {
       return 'address lookup failed';
     } finally {
@@ -251,6 +269,13 @@ function reverseGeocode(lat, lon) {
   geocodeQueue = resultPromise;
   reverseGeocodeCache.set(key, resultPromise);
   return resultPromise;
+}
+
+function formatShortAddress(data) {
+  const address = data && data.address;
+  if (!address) return 'no address found';
+  const streetLine = [address.house_number, address.road].filter(Boolean).join(' ');
+  return streetLine || 'no address found';
 }
 
 function wait(ms) {

@@ -54,6 +54,7 @@ out tags;
 
 * **Footer text** — "End of page" is the literal intended visible footer text.
 * **Ambiguous geocoding matches** — auto-pick Nominatim's first/top-ranked result. Print the matched location's display name at the top of the Results section, above the street list, so it's clear what was actually queried. If it's wrong, the user reruns with a more specific search string.
+* **Matched location field scope** — both geocoding calls request `addressdetails=1` to get Nominatim's structured `address` object instead of parsing `display_name`. The Results section's "Matched location" line is built from POI name (if any) + house number + road + city + state + postcode — `neighbourhood`, `county`, and `country` are deliberately excluded as noise for this experiment's purposes.
 
 ## Data views (footer tabs)
 
@@ -72,5 +73,6 @@ The footer holds a radio-button group ("Data view") that switches how the alread
   * Address lookups are done via Nominatim's reverse-geocoding endpoint (`/reverse?...&zoom=18`) and are **lazy** — a segment's two lookups only fire the first time its `<details>` is expanded, not when the tab is selected or the street is expanded. This is a deliberate choice to avoid bursting Nominatim's ~1 request/second usage policy, since a single search can return streets with 100+ segments.
   * All reverse-geocode calls are serialized through a single queue with a ~1.1s minimum gap between requests, and cached by rounded coordinate so that segments sharing an endpoint node (the common case at intersections) don't trigger duplicate lookups.
   * Fetching this view's underlying street/way data now uses `out geom;` instead of `out tags;` (a change shared by all views, since they all pull from the same cached fetch) — needed to get each segment's actual node coordinates for the start/end lookups.
+  * Displayed address text is deliberately narrowed to just **house number + road** (e.g. "1901 University Avenue"), dropping everything else from Nominatim's structured `address` object — this tab is only trying to answer "what address is at this endpoint," not display a full address.
 
 More views may be added to this tab set later.
