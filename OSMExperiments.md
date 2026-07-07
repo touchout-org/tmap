@@ -65,4 +65,12 @@ The footer holds a radio-button group ("Data view") that switches how the alread
   * Roadway classes: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `unclassified`, `residential`, `living_street`, `service`.
   * Pedestrian/path classes (eligible for suppression when paired with a roadway of the same name): `footway`, `path`, `cycleway`, `pedestrian`, `steps`.
 
+* **Address** — a different nesting shape from the other three tabs:
+  1. Street name (expandable, same as other tabs).
+  2. A numbered list of that street's individual segments (in whatever order Overpass returned them — not geographically sequenced).
+  3. Expanding a segment reveals a 2-item list: the reverse-geocoded address closest to the *first* coordinate in that segment's node chain, and the one closest to the *last* coordinate.
+  * Address lookups are done via Nominatim's reverse-geocoding endpoint (`/reverse?...&zoom=18`) and are **lazy** — a segment's two lookups only fire the first time its `<details>` is expanded, not when the tab is selected or the street is expanded. This is a deliberate choice to avoid bursting Nominatim's ~1 request/second usage policy, since a single search can return streets with 100+ segments.
+  * All reverse-geocode calls are serialized through a single queue with a ~1.1s minimum gap between requests, and cached by rounded coordinate so that segments sharing an endpoint node (the common case at intersections) don't trigger duplicate lookups.
+  * Fetching this view's underlying street/way data now uses `out geom;` instead of `out tags;` (a change shared by all views, since they all pull from the same cached fetch) — needed to get each segment's actual node coordinates for the start/end lookups.
+
 More views may be added to this tab set later.
