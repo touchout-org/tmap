@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSM Data Mine</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>OSM Data Viewer</h1>
+
+<form id="search-form">
+  <label for="location-input">Location</label>
+  <input type="text" id="location-input" name="location" required autocomplete="off">
+  <button type="submit">Submit</button>
+</form>
+
+<h2>Results</h2>
+<div id="results">
+  <p id="matched-location"></p>
+  <p id="status-message" aria-live="polite">No results. Please submit a location.</p>
+  <ul id="street-list"></ul>
+</div>
+
+<footer>
+  <h2>Footer</h2>
+  <p>End of page</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
