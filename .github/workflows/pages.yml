@@ -25,6 +25,10 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
+      - name: Stamp build time
+        run: |
+          BUILD_TIME=$(date -u +"%m-%d-%Y, %H:%M")
+          sed -i "s/__BUILD_TIME__/${BUILD_TIME} UTC/" index.html
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

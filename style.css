@@ -56,3 +56,9 @@ body {
   min-height: 1.4em;
   font-size: 0.95rem;
 }
+
+footer {
+  margin-top: 2rem;
+  color: #777;
+  font-size: 0.8rem;
+}

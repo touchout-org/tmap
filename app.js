@@ -309,9 +309,11 @@ function packPixelsToHex(pixels, displayW, displayH, numRows) {
 // (Phase 2) — same raw, unfiltered data as the on-screen render.
 function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displayH) {
   const pixels = new Uint8Array(displayW * displayH);
+  // -0.5 matches DotSVG's pixX/pixY: canvas/logical coordinates address the
+  // *center* of a display pixel, not its corner (see rasterizeShapes).
   const project = (lat, lon) => ({
-    x: ((lon - bbox.west) / (bbox.east - bbox.west)) * displayW,
-    y: ((bbox.north - lat) / (bbox.north - bbox.south)) * displayH
+    x: ((lon - bbox.west) / (bbox.east - bbox.west)) * displayW - 0.5,
+    y: ((bbox.north - lat) / (bbox.north - bbox.south)) * displayH - 0.5
   });
 
   for (const way of ways) {
@@ -330,6 +332,34 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
   return pixels;
 }
 
+// Diagnostic-only: a 6x4 lattice of long horizontal and vertical lines
+// spanning the full display, drawn with the exact same drawLinePixels /
+// packPixelsToHex path as real street data. Shown before the first map is
+// loaded so a broken/discontinuous render can be isolated to the rendering
+// pipeline itself (grid also broken) vs. something specific to street
+// geometry (grid solid, map broken).
+function rasterizeTestGrid(displayW, displayH, cols, rows) {
+  const pixels = new Uint8Array(displayW * displayH);
+  for (let c = 0; c <= cols; c++) {
+    const x = Math.min(displayW - 1, Math.round((c / cols) * (displayW - 1)));
+    drawLinePixels(pixels, displayW, displayH, x, 0, x, displayH - 1);
+  }
+  for (let r = 0; r <= rows; r++) {
+    const y = Math.min(displayH - 1, Math.round((r / rows) * (displayH - 1)));
+    drawLinePixels(pixels, displayW, displayH, 0, y, displayW - 1, y);
+  }
+  return pixels;
+}
+
+function sendPixelsToDevice(device, pixels, numCols, numRows) {
+  const displayW = numCols * 2;
+  const displayH = numRows * 4;
+  const hex = packPixelsToHex(pixels, displayW, displayH, numRows);
+  const zeros = '00'.repeat(numCols * numRows);
+  sdk.displayGraphicData(zeros, device, DisplayMode.GraphicMode);
+  sdk.displayGraphicData(hex, device, DisplayMode.GraphicMode);
+}
+
 function sendGraphicToDevice(device) {
   if (!lastBbox) return;
   const numCols = device.numberCellColumns;
@@ -337,10 +367,16 @@ function sendGraphicToDevice(device) {
   const displayW = numCols * 2;
   const displayH = numRows * 4;
   const pixels = rasterizeMapToPixels(lastBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH);
-  const hex = packPixelsToHex(pixels, displayW, displayH, numRows);
-  const zeros = '00'.repeat(numCols * numRows);
-  sdk.displayGraphicData(zeros, device, DisplayMode.GraphicMode);
-  sdk.displayGraphicData(hex, device, DisplayMode.GraphicMode);
+  sendPixelsToDevice(device, pixels, numCols, numRows);
+}
+
+function sendTestGridToDevice(device) {
+  const numCols = device.numberCellColumns;
+  const numRows = device.numberCellRows;
+  const displayW = numCols * 2;
+  const displayH = numRows * 4;
+  const pixels = rasterizeTestGrid(displayW, displayH, 6, 4);
+  sendPixelsToDevice(device, pixels, numCols, numRows);
 }
 
 // § Screen Layout — only one of Connect/Disconnect is ever visible, never both
@@ -349,8 +385,13 @@ function setConnectedState(device) {
   currentDevice = device;
   btnConnect.hidden = true;
   btnDisconnect.hidden = false;
-  setMessage('Dot Pad connected.');
-  if (lastBbox) sendGraphicToDevice(device);
+  if (lastBbox) {
+    setMessage('Dot Pad connected.');
+    sendGraphicToDevice(device);
+  } else {
+    setMessage('Dot Pad connected. Showing 6x4 test grid.');
+    sendTestGridToDevice(device);
+  }
 }
 
 function setDisconnectedState() {
