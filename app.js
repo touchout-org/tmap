@@ -34,6 +34,21 @@ const MILES_TO_METERS = 1609.344;
 const DOT_GRID_WIDTH = 60;
 const DOT_GRID_HEIGHT = 40;
 const SVG_UNITS_PER_DOT = SVG_WIDTH / DOT_GRID_WIDTH; // 10
+// § Scale behavior / § Settings — the 9 Traditional Scale presets ("1 in =
+// Y ft"). DOT_PAD_DISPLAY_WIDTH_INCHES is a placeholder pending the Dot
+// Pad's actual measured tactile display width — until that's known, the
+// scale combo box deliberately labels itself in Display Area terms
+// ("Y ft wide") rather than claiming a "1 in = Y ft" ratio that isn't
+// calibrated yet. Once the real inch width is known, set it here; nothing
+// else needs to change.
+const SCALE_PRESETS_FT = [100, 200, 300, 400, 500, 1000, 1500, 2000, 5000];
+const DEFAULT_SCALE_INDEX = 3; // 400
+const DOT_PAD_DISPLAY_WIDTH_INCHES = 1; // TODO: replace with measured value
+
+// § Pan Behavior / § Settings — default Pan Amount, in units of display
+// width/height (no Settings dialog yet, so this is the only value in use).
+const PAN_AMOUNT_FRACTION = 0.25;
+
 // A street "hits" the cursor when it passes within this many grid units of
 // the cursor's center — an approximation of "intersects the cursor's edge"
 // (tmap spec.md § Cursor and hit testing) sized to roughly match the small
@@ -50,6 +65,12 @@ const messageDisplay = document.getElementById('message-display');
 const btnConnect = document.getElementById('btn-connect');
 const btnDisconnect = document.getElementById('btn-disconnect');
 const deviceInfo = document.getElementById('device-info');
+const scaleSelect = document.getElementById('scale-select');
+const btnPanNorth = document.getElementById('btn-pan-north');
+const btnPanSouth = document.getElementById('btn-pan-south');
+const btnPanEast = document.getElementById('btn-pan-east');
+const btnPanWest = document.getElementById('btn-pan-west');
+const panButtons = [btnPanNorth, btnPanSouth, btnPanEast, btnPanWest];
 
 let hasAnchor = false;
 
@@ -65,6 +86,14 @@ let lastBbox = null;
 let lastWays = [];
 let lastAnchorLat = null;
 let lastAnchorLon = null;
+let lastAnchorName = null;
+
+// § Scale behavior / § Pan Behavior — the viewport is the sub-window of the
+// fetched data (lastBbox) actually shown at the current scale. Center starts
+// at the anchor POI on each new search; scaleIndex indexes SCALE_PRESETS_FT.
+let viewportCenterLat = null;
+let viewportCenterLon = null;
+let scaleIndex = DEFAULT_SCALE_INDEX;
 
 // Cursor position in dot-grid units (0..DOT_GRID_WIDTH-1, 0..DOT_GRID_HEIGHT-1).
 // null until a map has been loaded.
@@ -112,6 +141,27 @@ function truncateMessage(text, maxLen = 20) {
   const lastSpace = cut.lastIndexOf(' ');
   return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
 }
+
+// § Scale behavior — populate the combo box once from SCALE_PRESETS_FT.
+SCALE_PRESETS_FT.forEach((_, index) => {
+  const option = document.createElement('option');
+  option.value = String(index);
+  option.textContent = formatScaleLabel(index);
+  scaleSelect.appendChild(option);
+});
+scaleSelect.value = String(DEFAULT_SCALE_INDEX);
+
+scaleSelect.addEventListener('change', () => {
+  const newIndex = Number(scaleSelect.value);
+  scaleIndex = newIndex;
+  refreshMap();
+  setMessage(formatScaleLabel(scaleIndex));
+});
+
+btnPanNorth.addEventListener('click', () => panMap('north'));
+btnPanSouth.addEventListener('click', () => panMap('south'));
+btnPanEast.addEventListener('click', () => panMap('east'));
+btnPanWest.addEventListener('click', () => panMap('west'));
 
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -188,6 +238,57 @@ function squareBoundingBox(lat, lon, halfSideMiles) {
   };
 }
 
+const FEET_TO_METERS = 0.3048;
+const METERS_PER_DEGREE_LAT = 111320;
+
+function feetToLatDelta(feet) {
+  return (feet * FEET_TO_METERS) / METERS_PER_DEGREE_LAT;
+}
+
+function feetToLonDelta(feet, atLat) {
+  return (feet * FEET_TO_METERS) / (METERS_PER_DEGREE_LAT * Math.cos((atLat * Math.PI) / 180));
+}
+
+// East/north offset in feet of (lat, lon) from (fromLat, fromLon).
+function feetOffsetFrom(lat, lon, fromLat, fromLon) {
+  const northFt = ((lat - fromLat) * METERS_PER_DEGREE_LAT) / FEET_TO_METERS;
+  const eastFt = ((lon - fromLon) * METERS_PER_DEGREE_LAT * Math.cos((fromLat * Math.PI) / 180)) / FEET_TO_METERS;
+  return { eastFt, northFt };
+}
+
+// § Scale behavior — current viewport width/height in feet, from the
+// selected preset. Height follows the 3x2 display ratio (see SVG_HEIGHT/SVG_WIDTH).
+function viewportSizeFeet() {
+  const widthFt = SCALE_PRESETS_FT[scaleIndex] * DOT_PAD_DISPLAY_WIDTH_INCHES;
+  const heightFt = widthFt * (SVG_HEIGHT / SVG_WIDTH);
+  return { widthFt, heightFt };
+}
+
+// The geo bbox actually projected/displayed right now: centered on
+// viewportCenterLat/Lon, sized by the current scale, clamped to never
+// exceed the fetched data (lastBbox) even if the viewport is larger.
+function getViewportBbox() {
+  if (viewportCenterLat === null || !lastBbox) return null;
+  const { widthFt, heightFt } = viewportSizeFeet();
+  const latDelta = feetToLatDelta(heightFt / 2);
+  const lonDelta = feetToLonDelta(widthFt / 2, viewportCenterLat);
+  return {
+    south: Math.max(lastBbox.south, viewportCenterLat - latDelta),
+    north: Math.min(lastBbox.north, viewportCenterLat + latDelta),
+    west: Math.max(lastBbox.west, viewportCenterLon - lonDelta),
+    east: Math.min(lastBbox.east, viewportCenterLon + lonDelta)
+  };
+}
+
+// § Scale behavior — Display Area label ("Y ft by Z ft"), used instead of
+// a "1 in = Y ft" Traditional Scale label until DOT_PAD_DISPLAY_WIDTH_INCHES
+// is a real measured value rather than a placeholder.
+function formatScaleLabel(index) {
+  const widthFt = SCALE_PRESETS_FT[index] * DOT_PAD_DISPLAY_WIDTH_INCHES;
+  const heightFt = Math.round(widthFt * (SVG_HEIGHT / SVG_WIDTH));
+  return `${widthFt} ft by ${heightFt} ft`;
+}
+
 // § Data ingestion and cleaning pipeline, step 2 (Fetch). No dedup/collapse/tiering
 // yet (Phase 2) — every named, highway-tagged way in the box is rendered as-is.
 async function fetchWays(bbox) {
@@ -229,25 +330,48 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
   lastWays = ways;
   lastAnchorLat = lat;
   lastAnchorLon = lon;
+  lastAnchorName = displayName;
 
-  renderMap(bbox, ways, lat, lon);
+  // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
+  // POI at the default scale on every new search.
+  viewportCenterLat = lat;
+  viewportCenterLon = lon;
+  scaleIndex = DEFAULT_SCALE_INDEX;
+  scaleSelect.value = String(scaleIndex);
 
-  // § Cursor and hit testing — cursor starts at the anchor POI.
-  const anchorGrid = projectToGrid(lat, lon, bbox);
-  cursorGridX = clamp(Math.round(anchorGrid.x), 0, DOT_GRID_WIDTH - 1);
-  cursorGridY = clamp(Math.round(anchorGrid.y), 0, DOT_GRID_HEIGHT - 1);
   cursorSvg.hidden = false;
-  updateCursorVisual();
-
-  if (currentDevice) {
-    sendGraphicToDevice(currentDevice);
-  }
+  scaleSelect.disabled = false;
+  panButtons.forEach((btn) => { btn.disabled = false; });
+  refreshMap();
 
   setMessage(displayName);
 }
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+// Central re-render: recomputes the viewport bbox, redraws the on-screen
+// map, re-centers the cursor, and refreshes the tactile display if
+// connected. Called after a new search, a pan, or a scale change.
+//
+// Cursor re-centers on every viewport change rather than tracking a fixed
+// real-world point through the pan/scale -- simpler, and the spec leaves
+// this interaction open ("we will refine this behavior as we experiment
+// with the UI"). Revisit if that turns out to feel wrong in practice.
+function refreshMap() {
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return;
+
+  renderMap(viewportBbox, lastWays, lastAnchorLat, lastAnchorLon);
+
+  cursorGridX = Math.round(DOT_GRID_WIDTH / 2);
+  cursorGridY = Math.round(DOT_GRID_HEIGHT / 2);
+  updateCursorVisual();
+
+  if (currentDevice) {
+    sendGraphicToDevice(currentDevice);
+  }
 }
 
 function renderMap(bbox, ways, anchorLat, anchorLon) {
@@ -300,14 +424,15 @@ function distanceToSegment(px, py, x0, y0, x1, y1) {
 // § Cursor and hit testing — streets within CURSOR_HIT_RADIUS grid units of
 // the cursor's center are "current." Unique names only, joined with " & ".
 function currentObjectNames() {
-  if (!lastBbox || cursorGridX === null) return null;
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox || cursorGridX === null) return null;
   const names = new Set();
   for (const way of lastWays) {
     const name = way.tags && way.tags.name;
     if (!name || !way.geometry || way.geometry.length < 2) continue;
     let prev = null;
     for (const pt of way.geometry) {
-      const p = projectToGrid(pt.lat, pt.lon, lastBbox);
+      const p = projectToGrid(pt.lat, pt.lon, viewportBbox);
       if (prev) {
         const d = distanceToSegment(cursorGridX, cursorGridY, prev.x, prev.y, p.x, p.y);
         if (d <= CURSOR_HIT_RADIUS) {
@@ -337,16 +462,90 @@ function moveCursor(dx, dy) {
   }
 }
 
+// § Pan Behavior — moves the viewport by PAN_AMOUNT_FRACTION of its current
+// width/height. Rejected (viewport unchanged) if the move would push the
+// viewport past the edge of the fetched data; the message field reports
+// "Edge of Map" in that case, per spec. (No device "beep": the vendored SDK
+// doesn't expose one, and the message-field report is the primary channel
+// per Message display architecture regardless.)
+function panMap(direction) {
+  if (!lastBbox || viewportCenterLat === null) return;
+  const { widthFt, heightFt } = viewportSizeFeet();
+  const latStep = feetToLatDelta(heightFt * PAN_AMOUNT_FRACTION);
+  const lonStep = feetToLonDelta(widthFt * PAN_AMOUNT_FRACTION, viewportCenterLat);
+
+  let newLat = viewportCenterLat;
+  let newLon = viewportCenterLon;
+  if (direction === 'north') newLat += latStep;
+  else if (direction === 'south') newLat -= latStep;
+  else if (direction === 'east') newLon += lonStep;
+  else if (direction === 'west') newLon -= lonStep;
+
+  const halfLat = feetToLatDelta(heightFt / 2);
+  const halfLon = feetToLonDelta(widthFt / 2, newLat);
+  const exceedsEdge =
+    newLat + halfLat > lastBbox.north + 1e-9 ||
+    newLat - halfLat < lastBbox.south - 1e-9 ||
+    newLon + halfLon > lastBbox.east + 1e-9 ||
+    newLon - halfLon < lastBbox.west - 1e-9;
+
+  if (exceedsEdge) {
+    setMessage('Edge of Map');
+    return;
+  }
+
+  viewportCenterLat = newLat;
+  viewportCenterLon = newLon;
+  refreshMap();
+
+  const { eastFt, northFt } = feetOffsetFrom(viewportCenterLat, viewportCenterLon, lastAnchorLat, lastAnchorLon);
+  const distFt = Math.round(Math.hypot(eastFt, northFt));
+  const compass = Math.abs(eastFt) > Math.abs(northFt)
+    ? (eastFt >= 0 ? 'East' : 'West')
+    : (northFt >= 0 ? 'North' : 'South');
+  setMessage(distFt === 0 ? `At ${lastAnchorName}` : `${distFt} ft ${compass} of ${lastAnchorName}`);
+}
+
+// § Scale behavior — steps through SCALE_PRESETS_FT; delta is +1 ("[",
+// increase scale/zoom out) or -1 ("]", decrease scale/zoom in).
+function changeScale(delta) {
+  if (!lastBbox) return;
+  const newIndex = clamp(scaleIndex + delta, 0, SCALE_PRESETS_FT.length - 1);
+  if (newIndex === scaleIndex) return;
+  scaleIndex = newIndex;
+  scaleSelect.value = String(scaleIndex);
+  refreshMap();
+  setMessage(formatScaleLabel(scaleIndex));
+}
+
 document.addEventListener('keydown', (event) => {
   if (document.activeElement === locationInput) return;
-  const deltas = {
+  if (!lastBbox) return;
+
+  // § Command / hotkey mapping — [ increases scale (zoom out), ] decreases
+  // (zoom in).
+  if (event.key === '[' || event.key === ']') {
+    event.preventDefault();
+    changeScale(event.key === '[' ? 1 : -1);
+    return;
+  }
+
+  // Ctrl+arrow pans; plain arrow moves the cursor.
+  const panDirections = { ArrowUp: 'north', ArrowDown: 'south', ArrowLeft: 'west', ArrowRight: 'east' };
+  if (event.ctrlKey && panDirections[event.key]) {
+    event.preventDefault();
+    panMap(panDirections[event.key]);
+    return;
+  }
+
+  const cursorDeltas = {
     ArrowLeft: [-1, 0],
     ArrowRight: [1, 0],
     ArrowUp: [0, -1],
     ArrowDown: [0, 1]
   };
-  const delta = deltas[event.key];
-  if (!delta || !lastBbox) return;
+  const delta = cursorDeltas[event.key];
+  if (!delta) return;
   event.preventDefault();
   moveCursor(delta[0], delta[1]);
 });
@@ -532,13 +731,14 @@ function sendPixelsToDevice(device, pixels, numCols, numRows) {
 }
 
 function sendGraphicToDevice(device) {
-  if (!lastBbox) return;
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return;
   const numCols = device.numberCellColumns;
   const numRows = device.numberCellRows;
   const displayW = numCols * 2;
   const displayH = numRows * 4;
   const cursor = cursorGridX === null ? null : { x: cursorGridX, y: cursorGridY };
-  const pixels = rasterizeMapToPixels(lastBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
+  const pixels = rasterizeMapToPixels(viewportBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
   sendPixelsToDevice(device, pixels, numCols, numRows);
 }
 
@@ -643,9 +843,18 @@ sdk.setCallBack(
   },
   (device, keyCode, msg) => {
     const byte6 = labelToByte6(msg || keyCode);
+    // § Command / hotkey mapping — cursor: single dots 3/2/5/6.
     if (byte6 === 0x04) moveCursor(-1, 0);       // dot3 alone -> left
     else if (byte6 === 0x20) moveCursor(1, 0);   // dot6 alone -> right
     else if (byte6 === 0x02) moveCursor(0, -1);  // dot2 alone -> up
     else if (byte6 === 0x10) moveCursor(0, 1);   // dot5 alone -> down
+    // Pan: two-dot combos.
+    else if (byte6 === 0x09) panMap('north');    // dots 1+4
+    else if (byte6 === 0x24) panMap('south');    // dots 3+6
+    else if (byte6 === 0x05) panMap('west');     // dots 1+3
+    else if (byte6 === 0x28) panMap('east');     // dots 4+6
+    // Scale: two-dot combos.
+    else if (byte6 === 0x06) changeScale(1);     // dots 2+3 -> increase (zoom out)
+    else if (byte6 === 0x30) changeScale(-1);    // dots 5+6 -> decrease (zoom in)
   }
 );

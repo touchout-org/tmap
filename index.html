@@ -17,10 +17,22 @@
     <button type="submit">Search</button>
   </form>
 
-  <h2 id="anchor-heading" hidden></h2>
+  <div id="anchor-row">
+    <h2 id="anchor-heading" hidden></h2>
+    <label for="scale-select">Scale</label>
+    <select id="scale-select" disabled></select>
+  </div>
 
-  <div id="map-container">
-    <svg id="map" viewBox="0 0 600 400" role="img" aria-label="Street map"></svg>
+  <div id="map-row">
+    <div id="map-container">
+      <svg id="map" viewBox="0 0 600 400" role="img" aria-label="Street map"></svg>
+    </div>
+    <div id="move-map" role="group" aria-label="Move Map">
+      <button id="btn-pan-north" type="button" disabled>North</button>
+      <button id="btn-pan-west" type="button" disabled>West</button>
+      <button id="btn-pan-east" type="button" disabled>East</button>
+      <button id="btn-pan-south" type="button" disabled>South</button>
+    </div>
   </div>
 
   <div id="message-display" role="status" aria-live="polite"></div>

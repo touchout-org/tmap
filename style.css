@@ -30,9 +30,45 @@ body {
   padding: 0.4rem;
 }
 
+#anchor-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+#map-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
 #map-container {
   border: 1px solid #999;
+  flex: 1;
+  min-width: 0;
 }
+
+/* § Screen Layout — "Move Map," arranged in a plus sign: N top-center,
+   W/E either side of the (empty) middle, S bottom-center. */
+#move-map {
+  display: grid;
+  grid-template-columns: repeat(3, 2.4rem);
+  grid-template-rows: repeat(3, 2.4rem);
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+#move-map button {
+  font-size: 0.7rem;
+  padding: 0;
+}
+
+#btn-pan-north { grid-column: 2; grid-row: 1; }
+#btn-pan-west  { grid-column: 1; grid-row: 2; }
+#btn-pan-east  { grid-column: 3; grid-row: 2; }
+#btn-pan-south { grid-column: 2; grid-row: 3; }
 
 #map {
   display: block;
