@@ -30,6 +30,12 @@ The message field (the on-screen print version of the message display, an ARIA l
 
 Messages are kept terse by convention (e.g., a found address is truncated to the display's 20 cells at a word boundary, never mid-word) since there's currently no way to see more than what fits in those 20 cells at once. A command for panning the message display to reveal the rest of a longer message is a plausible future addition — not designed yet, flagged here so the terse-message convention isn't mistaken for a hard length limit on what the app can ever report.
 
+### Sound cues
+
+Alongside the message field, a short synthesized tone is a secondary, non-verbal cue for certain events — the first is Edge of Map (see [Pan Behavior](#pan-behavior)), a beep that plays when a pan is rejected. There's no standard way for a web page to trigger the OS/console bell, so cues are short tones generated with the Web Audio API (an oscillator, no external library or audio file needed) — this plays from the computer's own speakers, not the physical Dot Pad, which has no exposed beep/vibrate capability in the vendored SDK.
+
+This is meant as a general pattern, not a one-off for Edge of Map specifically: sound is a plausible secondary cue for a variety of future events (e.g., a save completing, an error, reaching a boundary of some other kind) where a quick non-verbal signal is useful alongside — never instead of — the message field, which remains the single source of truth for what actually happened. Specific additional cues aren't designed yet; this section exists so the pattern (and the "no external library needed" fact) doesn't need rediscovering each time one comes up.
+
 ## Screen Layout
 
 The default title is "DotTMAP — Tactile Street Maps for the Dot Pad." When a map has been loaded or created, the title of the current street map replaces the part of the title following the em dash (e.g., "DotTMAP — 123 Main Street, Springfield").
@@ -192,7 +198,7 @@ Streets are never removed from the underlying map data at any scale, only from t
 
 Using pan controls (see [command mapping](#command--hotkey-mapping)), the display moves in the specified direction by the amount specified in Pan Amount (settings). The tactile display updates and the on-screen Pan Status announces "[distance] [direction] of [anchor POI]," following the [message display architecture](#message-display-architecture) (message field updates first, then pushes to the Dot Pad and triggers speech).
 
-If a pan would move the view past the edge of the fetched data — the square region bounded by the POI distance threshold from the anchor POI, see [Data sources](#data-sources) — the pan is rejected: the device beeps, and the message display reports "Edge of Map."
+If a pan would move the view past the edge of the fetched data — the square region bounded by the POI distance threshold from the anchor POI, see [Data sources](#data-sources) — the pan is rejected: a tone plays (see [Sound cues](#sound-cues) — this comes from the computer's speakers, not the Dot Pad itself, which has no exposed beep/vibrate capability) and the message display reports "Edge of Map."
 
 ## POIs
 

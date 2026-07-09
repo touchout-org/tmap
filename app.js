@@ -13,12 +13,19 @@ const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 // but kept as named constants rather than inlined so the Settings dialog has a real
 // value to bind to later.
 //
-// Temporarily set well below the spec's [1 mile] default: with no decluttering
-// (Phase 2) or scale control (Phase 1 item 6) built yet, 1 mile crammed into the
-// 60x40 dot grid is too dense to read by touch. 0.15 miles (~three or four short
-// blocks) is small enough to verify individual streets render in the right place.
-// Revert to the real default once Scale / decluttering land.
-const POI_DISTANCE_THRESHOLD_MILES = 0.15;
+// Larger than the earlier 0.15mi test value now that Scale/Pan (Phase 1
+// item 6) exist -- the original concern about a big fetch being too dense
+// to read by touch was about cramming the whole fetch region into the
+// display at once, which no longer happens now that only a scale-sized
+// viewport window is ever shown. Not yet the spec's real [1 mile] default,
+// though: empirically tested both directly against the public Overpass
+// instance (isolated single requests, not rate-limit noise) -- 1 mile
+// half-side reliably times out (504 after ~13s) for this dense test area,
+// while 0.5 miles reliably succeeds (~3s, ~400KB). 0.5mi gets Scale changes
+// visibly working up toward the 1000ft preset with some room to pan.
+// Revisit once Phase 2 decluttering exists (smaller responses) or a
+// non-public/self-hosted Overpass endpoint is used.
+const POI_DISTANCE_THRESHOLD_MILES = 0.5;
 
 // Matches DotSVG's 600x400 canvas (10:1 over the 60x40 dot grid) — see tmap spec.md
 // § SVG Display Requirements (3x2 canvas ratio).
@@ -94,10 +101,17 @@ let viewportCenterLat = null;
 let viewportCenterLon = null;
 let scaleIndex = DEFAULT_SCALE_INDEX;
 
-// Cursor position in dot-grid units (0..DOT_GRID_WIDTH-1, 0..DOT_GRID_HEIGHT-1).
-// null until a map has been loaded.
-let cursorGridX = null;
-let cursorGridY = null;
+// Cursor position, stored as a real-world lat/lon (not grid units) so it
+// stays fixed relative to the map through pan and scale changes rather than
+// jumping around when the viewport underneath it moves. null until a map
+// has been loaded. Grid/display position is derived fresh from this each
+// render (see cursorGridPosition/updateCursorVisual), and clamped to the
+// current viewport's bounds -- if the cursor's real position is temporarily
+// outside the visible area, it displays pinned to the nearest edge without
+// forgetting where it actually is, so panning back brings it into view
+// again at the same real-world spot.
+let cursorLat = null;
+let cursorLon = null;
 const cursorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
 cursorSvg.setAttribute('class', 'cursor');
 cursorSvg.setAttribute('r', SVG_UNITS_PER_DOT * 1.5);
@@ -139,6 +153,35 @@ function truncateMessage(text, maxLen = 20) {
   const cut = text.slice(0, maxLen);
   const lastSpace = cut.lastIndexOf(' ');
   return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+}
+
+// § Sound cues — secondary, non-verbal feedback alongside the message
+// field. There's no standard way for a web page to trigger the OS/console
+// bell, so cues are short tones synthesized with the Web Audio API --
+// no external library or audio file needed. AudioContext is created lazily
+// on first use, since browsers require it to happen inside a user-gesture
+// event handler (a keypress or click, which every caller here already is).
+let audioContext = null;
+function playTone(frequency, durationMs) {
+  if (!audioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    audioContext = new AudioContextClass();
+  }
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.value = frequency;
+  gain.gain.value = 0.2;
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start();
+  oscillator.stop(audioContext.currentTime + durationMs / 1000);
+}
+
+// Low, short "bump" tone for Edge of Map -- see tmap spec.md § Sound cues.
+function playEdgeOfMapTone() {
+  playTone(220, 150);
 }
 
 // § Scale behavior — populate the combo box once from SCALE_PRESETS_FT.
@@ -314,6 +357,24 @@ function projectToGrid(lat, lon, bbox) {
   return { x, y };
 }
 
+// Inverse of projectToGrid: grid position -> lat/lon, for the same bbox.
+function gridToLatLon(gridX, gridY, bbox) {
+  const lon = bbox.west + ((gridX + 0.5) / DOT_GRID_WIDTH) * (bbox.east - bbox.west);
+  const lat = bbox.north - ((gridY + 0.5) / DOT_GRID_HEIGHT) * (bbox.north - bbox.south);
+  return { lat, lon };
+}
+
+// The cursor's position in the *current* viewport's grid space, clamped to
+// what's actually on screen. Returns null if there's no map or viewport yet.
+function cursorGridPosition(viewportBbox) {
+  if (cursorLat === null || !viewportBbox) return null;
+  const p = projectToGrid(cursorLat, cursorLon, viewportBbox);
+  return {
+    x: clamp(Math.round(p.x), 0, DOT_GRID_WIDTH - 1),
+    y: clamp(Math.round(p.y), 0, DOT_GRID_HEIGHT - 1)
+  };
+}
+
 function showAnchor(displayName, lat, lon, bbox, ways) {
   document.title = `DotTMAP — ${displayName}`;
   anchorHeading.textContent = displayName;
@@ -337,6 +398,10 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
   scaleIndex = DEFAULT_SCALE_INDEX;
   scaleSelect.value = String(scaleIndex);
 
+  // § Cursor and hit testing — cursor starts at the anchor POI on a new
+  // search (but not on later pan/scale changes -- see refreshMap).
+  cursorLat = lat;
+  cursorLon = lon;
   cursorSvg.hidden = false;
   scaleSelect.disabled = false;
   panButtons.forEach((btn) => { btn.disabled = false; });
@@ -363,8 +428,9 @@ function refreshMap() {
 
   renderMap(viewportBbox, lastWays, lastAnchorLat, lastAnchorLon);
 
-  cursorGridX = Math.round(DOT_GRID_WIDTH / 2);
-  cursorGridY = Math.round(DOT_GRID_HEIGHT / 2);
+  // Cursor keeps its real-world position (cursorLat/cursorLon) through pan
+  // and scale changes -- just reproject it against the new viewport, rather
+  // than resetting it. See the cursorLat/cursorLon declaration for why.
   updateCursorVisual();
 
   if (currentDevice) {
@@ -404,8 +470,11 @@ function renderMap(bbox, ways, anchorLat, anchorLon) {
 
 // Centers the on-screen cursor circle on the current grid cell.
 function updateCursorVisual() {
-  const cx = (cursorGridX + 0.5) * SVG_UNITS_PER_DOT;
-  const cy = (cursorGridY + 0.5) * SVG_UNITS_PER_DOT;
+  const viewportBbox = getViewportBbox();
+  const grid = cursorGridPosition(viewportBbox);
+  if (!grid) return;
+  const cx = (grid.x + 0.5) * SVG_UNITS_PER_DOT;
+  const cy = (grid.y + 0.5) * SVG_UNITS_PER_DOT;
   cursorSvg.setAttribute('cx', cx.toFixed(1));
   cursorSvg.setAttribute('cy', cy.toFixed(1));
 }
@@ -423,7 +492,8 @@ function distanceToSegment(px, py, x0, y0, x1, y1) {
 // the cursor's center are "current." Unique names only, joined with " & ".
 function currentObjectNames() {
   const viewportBbox = getViewportBbox();
-  if (!viewportBbox || cursorGridX === null) return null;
+  const cursorGrid = cursorGridPosition(viewportBbox);
+  if (!cursorGrid) return null;
   const names = new Set();
   for (const way of lastWays) {
     const name = way.tags && way.tags.name;
@@ -432,7 +502,7 @@ function currentObjectNames() {
     for (const pt of way.geometry) {
       const p = projectToGrid(pt.lat, pt.lon, viewportBbox);
       if (prev) {
-        const d = distanceToSegment(cursorGridX, cursorGridY, prev.x, prev.y, p.x, p.y);
+        const d = distanceToSegment(cursorGrid.x, cursorGrid.y, prev.x, prev.y, p.x, p.y);
         if (d <= CURSOR_HIT_RADIUS) {
           names.add(name);
           break;
@@ -447,9 +517,14 @@ function currentObjectNames() {
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
 // acceleration. Shared by both the arrow keys and the Dot Pad's dots 3/2/5/6.
 function moveCursor(dx, dy) {
-  if (!lastBbox || cursorGridX === null) return;
-  cursorGridX = clamp(cursorGridX + dx, 0, DOT_GRID_WIDTH - 1);
-  cursorGridY = clamp(cursorGridY + dy, 0, DOT_GRID_HEIGHT - 1);
+  const viewportBbox = getViewportBbox();
+  const current = cursorGridPosition(viewportBbox);
+  if (!current) return;
+  const newGridX = clamp(current.x + dx, 0, DOT_GRID_WIDTH - 1);
+  const newGridY = clamp(current.y + dy, 0, DOT_GRID_HEIGHT - 1);
+  const newPos = gridToLatLon(newGridX, newGridY, viewportBbox);
+  cursorLat = newPos.lat;
+  cursorLon = newPos.lon;
   updateCursorVisual();
 
   const names = currentObjectNames();
@@ -463,9 +538,9 @@ function moveCursor(dx, dy) {
 // § Pan Behavior — moves the viewport by PAN_AMOUNT_FRACTION of its current
 // width/height. Rejected (viewport unchanged) if the move would push the
 // viewport past the edge of the fetched data; the message field reports
-// "Edge of Map" in that case, per spec. (No device "beep": the vendored SDK
-// doesn't expose one, and the message-field report is the primary channel
-// per Message display architecture regardless.)
+// "Edge of Map" and a tone plays (see § Sound cues), per spec. This is a
+// tone from the computer's own speakers, not the physical Dot Pad beeping --
+// the vendored SDK doesn't expose a device-side beep/vibrate.
 function panMap(direction) {
   if (!lastBbox || viewportCenterLat === null) return;
   const { widthFt, heightFt } = viewportSizeFeet();
@@ -489,6 +564,7 @@ function panMap(direction) {
 
   if (exceedsEdge) {
     setMessage('Edge of Map');
+    playEdgeOfMapTone();
     return;
   }
 
@@ -735,7 +811,7 @@ function sendGraphicToDevice(device) {
   const numRows = device.numberCellRows;
   const displayW = numCols * 2;
   const displayH = numRows * 4;
-  const cursor = cursorGridX === null ? null : { x: cursorGridX, y: cursorGridY };
+  const cursor = cursorGridPosition(viewportBbox);
   const pixels = rasterizeMapToPixels(viewportBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
   sendPixelsToDevice(device, pixels, numCols, numRows);
 }
