@@ -245,8 +245,14 @@ function textToMessageHex(text, numCells) {
   return hex;
 }
 
+// Hardcoded to the spec's documented 20-cell message display rather than
+// trusting device.numberBrailleCellColumns — diagnostic step to rule out the
+// device misreporting a larger cell count and being sent more data than its
+// message line can actually hold.
+const MESSAGE_LINE_CELLS = 20;
+
 function sendTextToDevice(text, device) {
-  const numCells = device.numberBrailleCellColumns;
+  const numCells = MESSAGE_LINE_CELLS;
   const zeros = '00'.repeat(numCells);
   const hex = textToMessageHex(text, numCells);
   sdk.displayTextData(zeros, device, DisplayMode.TextMode);
