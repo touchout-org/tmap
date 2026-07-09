@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DotTMAP — Tactile Street Maps for the Dot Pad</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <p id="browser-warning" role="alert" hidden>This App works best in Chrome. Please switch to Chrome so you can connect to the Dot Pad.</p>
+
+  <h1>Welcome to DotTMAP</h1>
+
+  <form id="search-form">
+    <label for="location-input" id="location-label">Enter an address or location to get started:</label>
+    <input type="text" id="location-input" name="location" autocomplete="off">
+    <button type="submit">Search</button>
+  </form>
+
+  <h2 id="anchor-heading" hidden></h2>
+
+  <div id="map-container">
+    <svg id="map" viewBox="0 0 600 400" role="img" aria-label="Street map"></svg>
+  </div>
+
+  <div id="message-display" role="status" aria-live="polite"></div>
+
+  <hr>
+  <h3>Controls</h3>
+  <div id="controls-row">
+    <button id="btn-connect" type="button">Connect Dot Pad</button>
+    <button id="btn-disconnect" type="button" hidden>Disconnect Dot Pad</button>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
