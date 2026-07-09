@@ -35,15 +35,14 @@ const DOT_GRID_WIDTH = 60;
 const DOT_GRID_HEIGHT = 40;
 const SVG_UNITS_PER_DOT = SVG_WIDTH / DOT_GRID_WIDTH; // 10
 // § Scale behavior / § Settings — the 9 Traditional Scale presets ("1 in =
-// Y ft"). DOT_PAD_DISPLAY_WIDTH_INCHES is a placeholder pending the Dot
-// Pad's actual measured tactile display width — until that's known, the
-// scale combo box deliberately labels itself in Display Area terms
-// ("Y ft wide") rather than claiming a "1 in = Y ft" ratio that isn't
-// calibrated yet. Once the real inch width is known, set it here; nothing
-// else needs to change.
+// Y ft"). DOT_PAD_DISPLAY_WIDTH_INCHES is the tactile display's measured
+// width: 6 3/16 in (height is 4 1/8 in — exactly a 3:2 ratio, matching
+// SVG_WIDTH:SVG_HEIGHT below, so height is still derived from width via
+// that fixed ratio rather than tracked separately). Works out to ~9.7 dots
+// per inch on both axes -- close enough to call it 10 DPI.
 const SCALE_PRESETS_FT = [100, 200, 300, 400, 500, 1000, 1500, 2000, 5000];
 const DEFAULT_SCALE_INDEX = 3; // 400
-const DOT_PAD_DISPLAY_WIDTH_INCHES = 1; // TODO: replace with measured value
+const DOT_PAD_DISPLAY_WIDTH_INCHES = 6 + 3 / 16;
 
 // § Pan Behavior / § Settings — default Pan Amount, in units of display
 // width/height (no Settings dialog yet, so this is the only value in use).
@@ -280,13 +279,12 @@ function getViewportBbox() {
   };
 }
 
-// § Scale behavior — Display Area label ("Y ft by Z ft"), used instead of
-// a "1 in = Y ft" Traditional Scale label until DOT_PAD_DISPLAY_WIDTH_INCHES
-// is a real measured value rather than a placeholder.
+// § Scale behavior / § Settings — Traditional Scale is the spec's default
+// Scale Type, now that DOT_PAD_DISPLAY_WIDTH_INCHES is a real measured
+// value rather than a placeholder. (Display Area is still what actually
+// drives the viewport math in viewportSizeFeet() — this is just the label.)
 function formatScaleLabel(index) {
-  const widthFt = SCALE_PRESETS_FT[index] * DOT_PAD_DISPLAY_WIDTH_INCHES;
-  const heightFt = Math.round(widthFt * (SVG_HEIGHT / SVG_WIDTH));
-  return `${widthFt} ft by ${heightFt} ft`;
+  return `1 in = ${SCALE_PRESETS_FT[index]} ft`;
 }
 
 // § Data ingestion and cleaning pipeline, step 2 (Fetch). No dedup/collapse/tiering
