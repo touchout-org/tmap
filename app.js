@@ -26,6 +26,20 @@ const SVG_WIDTH = 600;
 const SVG_HEIGHT = 400;
 const MILES_TO_METERS = 1609.344;
 
+// § Cursor and hit testing — the cursor/hit-testing grid is fixed at the
+// Dot Pad's native 60x40 dot resolution (confirmed via the on-connect
+// device-info diagnostic: numberCellColumns=30, numberCellRows=10) and is
+// independent of whether a device is actually connected, per the Hardware
+// requirement that the app works standalone.
+const DOT_GRID_WIDTH = 60;
+const DOT_GRID_HEIGHT = 40;
+const SVG_UNITS_PER_DOT = SVG_WIDTH / DOT_GRID_WIDTH; // 10
+// A street "hits" the cursor when it passes within this many grid units of
+// the cursor's center — an approximation of "intersects the cursor's edge"
+// (tmap spec.md § Cursor and hit testing) sized to roughly match the small
+// 4x4 cursor footprint. To be refined once this is visible on hardware.
+const CURSOR_HIT_RADIUS = 2;
+
 const browserWarning = document.getElementById('browser-warning');
 const searchForm = document.getElementById('search-form');
 const locationLabel = document.getElementById('location-label');
@@ -51,6 +65,15 @@ let lastBbox = null;
 let lastWays = [];
 let lastAnchorLat = null;
 let lastAnchorLon = null;
+
+// Cursor position in dot-grid units (0..DOT_GRID_WIDTH-1, 0..DOT_GRID_HEIGHT-1).
+// null until a map has been loaded.
+let cursorGridX = null;
+let cursorGridY = null;
+const cursorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+cursorSvg.setAttribute('class', 'cursor');
+cursorSvg.setAttribute('r', SVG_UNITS_PER_DOT * 1.5);
+cursorSvg.hidden = true;
 
 // § Browser check
 function isChrome() {
@@ -180,6 +203,14 @@ function projectToSvg(lat, lon, bbox) {
   return { x, y };
 }
 
+// Same -0.5 pixel-center convention as rasterizeMapToPixels, so cursor/hit
+// testing lines up with what the tactile display actually shows.
+function projectToGrid(lat, lon, bbox) {
+  const x = ((lon - bbox.west) / (bbox.east - bbox.west)) * DOT_GRID_WIDTH - 0.5;
+  const y = ((bbox.north - lat) / (bbox.north - bbox.south)) * DOT_GRID_HEIGHT - 0.5;
+  return { x, y };
+}
+
 function showAnchor(displayName, lat, lon, bbox, ways) {
   document.title = `DotTMAP — ${displayName}`;
   anchorHeading.textContent = displayName;
@@ -196,11 +227,23 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
   lastAnchorLon = lon;
 
   renderMap(bbox, ways, lat, lon);
+
+  // § Cursor and hit testing — cursor starts at the anchor POI.
+  const anchorGrid = projectToGrid(lat, lon, bbox);
+  cursorGridX = clamp(Math.round(anchorGrid.x), 0, DOT_GRID_WIDTH - 1);
+  cursorGridY = clamp(Math.round(anchorGrid.y), 0, DOT_GRID_HEIGHT - 1);
+  cursorSvg.hidden = false;
+  updateCursorVisual();
+
   if (currentDevice) {
     sendGraphicToDevice(currentDevice);
   }
 
   setMessage(truncateMessage(displayName));
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function renderMap(bbox, ways, anchorLat, anchorLon) {
@@ -228,7 +271,81 @@ function renderMap(bbox, ways, anchorLat, anchorLon) {
   marker.setAttribute('r', 4);
   marker.setAttribute('class', 'anchor-poi');
   mapSvg.appendChild(marker);
+
+  // Cursor is a single reused element, always drawn last (on top).
+  mapSvg.appendChild(cursorSvg);
 }
+
+// Centers the on-screen cursor circle on the current grid cell.
+function updateCursorVisual() {
+  const cx = (cursorGridX + 0.5) * SVG_UNITS_PER_DOT;
+  const cy = (cursorGridY + 0.5) * SVG_UNITS_PER_DOT;
+  cursorSvg.setAttribute('cx', cx.toFixed(1));
+  cursorSvg.setAttribute('cy', cy.toFixed(1));
+}
+
+function distanceToSegment(px, py, x0, y0, x1, y1) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(px - x0, py - y0);
+  let t = ((px - x0) * dx + (py - y0) * dy) / lenSq;
+  t = clamp(t, 0, 1);
+  return Math.hypot(px - (x0 + t * dx), py - (y0 + t * dy));
+}
+
+// § Cursor and hit testing — streets within CURSOR_HIT_RADIUS grid units of
+// the cursor's center are "current." Unique names only, joined with " & ".
+function currentObjectNames() {
+  if (!lastBbox || cursorGridX === null) return null;
+  const names = new Set();
+  for (const way of lastWays) {
+    const name = way.tags && way.tags.name;
+    if (!name || !way.geometry || way.geometry.length < 2) continue;
+    let prev = null;
+    for (const pt of way.geometry) {
+      const p = projectToGrid(pt.lat, pt.lon, lastBbox);
+      if (prev) {
+        const d = distanceToSegment(cursorGridX, cursorGridY, prev.x, prev.y, p.x, p.y);
+        if (d <= CURSOR_HIT_RADIUS) {
+          names.add(name);
+          break;
+        }
+      }
+      prev = p;
+    }
+  }
+  return names.size ? Array.from(names).join(' & ') : null;
+}
+
+// § Command / hotkey mapping — cursor moves one display pixel per press, no
+// acceleration. Shared by both the arrow keys and the Dot Pad's dots 3/2/5/6.
+function moveCursor(dx, dy) {
+  if (!lastBbox || cursorGridX === null) return;
+  cursorGridX = clamp(cursorGridX + dx, 0, DOT_GRID_WIDTH - 1);
+  cursorGridY = clamp(cursorGridY + dy, 0, DOT_GRID_HEIGHT - 1);
+  updateCursorVisual();
+
+  const names = currentObjectNames();
+  setMessage(names ? truncateMessage(names) : 'No street');
+
+  if (currentDevice) {
+    sendGraphicToDevice(currentDevice);
+  }
+}
+
+document.addEventListener('keydown', (event) => {
+  if (document.activeElement === locationInput) return;
+  const deltas = {
+    ArrowLeft: [-1, 0],
+    ArrowRight: [1, 0],
+    ArrowUp: [0, -1],
+    ArrowDown: [0, 1]
+  };
+  const delta = deltas[event.key];
+  if (!delta || !lastBbox) return;
+  event.preventDefault();
+  moveCursor(delta[0], delta[1]);
+});
 
 // ── Dot Pad connection + tactile rendering ──────────────────────────────────
 // Reuses the DotSVG project's braille-message and pixel-rasterization modules
@@ -306,6 +423,22 @@ function drawFilledCircle(pixels, w, h, cx, cy, r) {
   }
 }
 
+// § SVG Display Requirements — cursor is "a 4x4 square with corner dots
+// removed": an 8-dot ring around a 2x2 unfilled center. (cx,cy) is the
+// square's upper-left interior corner.
+function drawCursorPixels(pixels, w, h, cx, cy) {
+  cx = Math.round(cx); cy = Math.round(cy);
+  const offsets = [
+    [0, -1], [1, -1],
+    [-1, 0], [2, 0],
+    [-1, 1], [2, 1],
+    [0, 2], [1, 2]
+  ];
+  for (const [dx, dy] of offsets) {
+    setGridPixel(pixels, w, h, cx + dx, cy + dy);
+  }
+}
+
 // Packs a 0/1 pixel buffer into the DotPad SDK's per-cell hex byte format
 // (each braille cell is 2 dots wide x 4 dots tall).
 function packPixelsToHex(pixels, displayW, displayH, numRows) {
@@ -332,7 +465,7 @@ function packPixelsToHex(pixels, displayW, displayH, numRows) {
 // (not downscaled from the on-screen 600x400 SVG) and rasterizes streets +
 // anchor marker with the Bresenham helpers above. No dedup/tiering yet
 // (Phase 2) — same raw, unfiltered data as the on-screen render.
-function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displayH) {
+function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displayH, cursor) {
   const pixels = new Uint8Array(displayW * displayH);
   // -0.5 matches DotSVG's pixX/pixY: canvas/logical coordinates address the
   // *center* of a display pixel, not its corner (see rasterizeShapes).
@@ -353,6 +486,15 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
 
   const anchor = project(anchorLat, anchorLon);
   drawFilledCircle(pixels, displayW, displayH, anchor.x, anchor.y, 1);
+
+  if (cursor) {
+    // Scale from the fixed DOT_GRID_WIDTH/HEIGHT cursor space into this
+    // device's own reported dimensions (equal in practice, per the
+    // on-connect device-info diagnostic, but kept independent).
+    const cx = cursor.x * (displayW / DOT_GRID_WIDTH);
+    const cy = cursor.y * (displayH / DOT_GRID_HEIGHT);
+    drawCursorPixels(pixels, displayW, displayH, cx, cy);
+  }
 
   return pixels;
 }
@@ -391,7 +533,8 @@ function sendGraphicToDevice(device) {
   const numRows = device.numberCellRows;
   const displayW = numCols * 2;
   const displayH = numRows * 4;
-  const pixels = rasterizeMapToPixels(lastBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH);
+  const cursor = cursorGridX === null ? null : { x: cursorGridX, y: cursorGridY };
+  const pixels = rasterizeMapToPixels(lastBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
   sendPixelsToDevice(device, pixels, numCols, numRows);
 }
 
@@ -465,6 +608,24 @@ btnDisconnect.addEventListener('click', () => {
 
 // The key-event callback is a placeholder for now — cursor movement/hit-testing
 // (Phase 1 item 4) and hotkey wiring (item 5) aren't built yet.
+// § Command / hotkey mapping — decodes a Dot Pad key event into a byte6
+// dot-chord bitmask, ported verbatim from DotSVG's labelToByte6. Cursor
+// dots per tmap spec.md § Cursor and hit testing: 3=left, 2=up, 5=down,
+// 6=right (bit0=dot1 ... bit5=dot6).
+function labelToByte6(label) {
+  const hasLP = /\bLP\b/.test(label) || /\bAP\b/.test(label);
+  const hasRP = /\bRP\b/.test(label) || /\bAP\b/.test(label);
+  const mPlus = label.match(/\+\s*(\d+)/);
+  const mBare = !mPlus && label.match(/^\d+$/);
+  const num = mPlus ? parseInt(mPlus[1], 10) : mBare ? parseInt(mBare[0], 10) : 0;
+  return ((num & 4) ? 0x01 : 0) |  // dot 1
+         ((num & 8) ? 0x02 : 0) |  // dot 2
+         (hasLP     ? 0x04 : 0) |  // dot 3
+         ((num & 2) ? 0x08 : 0) |  // dot 4
+         ((num & 1) ? 0x10 : 0) |  // dot 5
+         (hasRP     ? 0x20 : 0);   // dot 6
+}
+
 sdk.setCallBack(
   (device, dataCode) => {
     btnConnect.disabled = false;
@@ -476,5 +637,11 @@ sdk.setCallBack(
       setMessage('Connect failed');
     }
   },
-  () => {}
+  (device, keyCode, msg) => {
+    const byte6 = labelToByte6(msg || keyCode);
+    if (byte6 === 0x04) moveCursor(-1, 0);       // dot3 alone -> left
+    else if (byte6 === 0x20) moveCursor(1, 0);   // dot6 alone -> right
+    else if (byte6 === 0x02) moveCursor(0, -1);  // dot2 alone -> up
+    else if (byte6 === 0x10) moveCursor(0, 1);   // dot5 alone -> down
+  }
 );

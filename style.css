@@ -51,6 +51,12 @@ body {
   fill: #1a1a1a;
 }
 
+#map .cursor {
+  fill: none;
+  stroke: #c0392b;
+  stroke-width: 1.5;
+}
+
 #message-display {
   margin-top: 0.5rem;
   min-height: 1.4em;
