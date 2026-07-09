@@ -289,8 +289,8 @@ function drawFilledCircle(pixels, w, h, cx, cy, r) {
 
 // Packs a 0/1 pixel buffer into the DotPad SDK's per-cell hex byte format
 // (each braille cell is 2 dots wide x 4 dots tall).
-function packPixelsToHex(pixels, displayW, displayH, numCols, numRows) {
-  const nibbles = new Uint8Array(numCols * numRows);
+function packPixelsToHex(pixels, displayW, displayH, numRows) {
+  const nibbles = new Uint8Array(displayW * numRows);
   for (let y = 0; y < displayH; y++) {
     const band = Math.floor(y / 4);
     const bit = y % 4;
@@ -337,7 +337,7 @@ function sendGraphicToDevice(device) {
   const displayW = numCols * 2;
   const displayH = numRows * 4;
   const pixels = rasterizeMapToPixels(lastBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH);
-  const hex = packPixelsToHex(pixels, displayW, displayH, numCols, numRows);
+  const hex = packPixelsToHex(pixels, displayW, displayH, numRows);
   const zeros = '00'.repeat(numCols * numRows);
   sdk.displayGraphicData(zeros, device, DisplayMode.GraphicMode);
   sdk.displayGraphicData(hex, device, DisplayMode.GraphicMode);
