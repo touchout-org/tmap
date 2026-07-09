@@ -62,10 +62,14 @@ if (!isChrome()) {
 
 // § Message display architecture — the on-screen field is the single source of
 // truth; it updates first, then pushes to the Dot Pad's 20-cell message display.
-function setMessage(text) {
+function setMessage(text, deviceDelayMs = 0) {
   messageDisplay.textContent = text;
   if (currentDevice) {
-    sendTextToDevice(text, currentDevice);
+    if (deviceDelayMs > 0) {
+      setTimeout(() => sendTextToDevice(text, currentDevice), deviceDelayMs);
+    } else {
+      sendTextToDevice(text, currentDevice);
+    }
   }
 }
 
@@ -391,11 +395,14 @@ function setConnectedState(device) {
   currentDevice = device;
   btnConnect.hidden = true;
   btnDisconnect.hidden = false;
+  // Diagnostic: delay just the message-line device write by 1s after
+  // connecting, to test whether writing it immediately puts the device into
+  // a bad state that then corrupts the graphic write that follows.
   if (lastBbox) {
-    setMessage('Dot Pad connected.');
+    setMessage('Dot Pad connected.', 1000);
     sendGraphicToDevice(device);
   } else {
-    setMessage('Dot Pad connected. Showing 6x4 test grid.');
+    setMessage('Dot Pad connected. Showing 6x4 test grid.', 1000);
     sendTestGridToDevice(device);
   }
 }
