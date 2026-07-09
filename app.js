@@ -23,8 +23,9 @@ const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 // half-side reliably times out (504 after ~13s) for this dense test area,
 // while 0.5 miles reliably succeeds (~3s, ~400KB). 0.5mi gets Scale changes
 // visibly working up toward the 1000ft preset with some room to pan.
-// Revisit once Phase 2 decluttering exists (smaller responses) or a
-// non-public/self-hosted Overpass endpoint is used.
+// Revisit once a non-public/self-hosted Overpass endpoint is used --
+// Phase 2 decluttering (see processWays) reduces what's rendered, not the
+// fetch payload itself, so it doesn't relax this constraint.
 const POI_DISTANCE_THRESHOLD_MILES = 0.5;
 
 // Matches DotSVG's 600x400 canvas (10:1 over the 60x40 dot grid) — see tmap spec.md
@@ -64,6 +65,41 @@ const DOT_PAD_DISPLAY_WIDTH_INCHES = 6 + 3 / 16;
 // width/height (no Settings dialog yet, so this is the only value in use).
 const PAN_AMOUNT_FRACTION = 0.25;
 
+// § Same-name roadway/pedestrian de-duplication
+const ROADWAY_CLASSES = new Set([
+  'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
+  'unclassified', 'residential', 'living_street', 'service'
+]);
+const PEDESTRIAN_CLASSES = new Set(['footway', 'path', 'cycleway', 'pedestrian', 'steps']);
+
+// § Street importance tiers — an unrecognized highway value (the Overpass
+// query has no class filter, so lifecycle tags like construction/proposed
+// can come through) falls to tier 7, the first to be hidden by decluttering,
+// rather than crashing or getting treated as important.
+const HIGHWAY_TIERS = {
+  motorway: 1, trunk: 1,
+  primary: 2,
+  secondary: 3,
+  tertiary: 4,
+  unclassified: 5, residential: 5, living_street: 5,
+  service: 6,
+  footway: 7, path: 7, cycleway: 7, pedestrian: 7, steps: 7
+};
+const MAX_TIER = 7;
+
+// § Experimental tuning fields (early development only) — no defaults yet
+// per spec; each stays unset until the user enters a value in the dev-only
+// tuning surface. Carriageway collapse and tier-based decluttering are both
+// no-ops (show/keep everything) while their parameter is unset.
+let tuningCarriagewayMaxSeparationFt = null;
+let tuningDensityCellSizePx = null;
+let tuningDensityThreshold = null;
+
+// Number of evenly-spaced points used to resample each way in a matched
+// carriageway pair before averaging into a centerline (see
+// collapseToCenterline) — arbitrary but plenty for street-scale geometry.
+const CARRIAGEWAY_RESAMPLE_POINTS = 12;
+
 // A street "hits" the cursor when it passes within this many grid units of
 // the cursor's center — an approximation of "intersects the cursor's edge"
 // (tmap spec.md § Cursor and hit testing) sized to roughly match the small
@@ -95,6 +131,9 @@ const labelCheckboxes = {
   left: document.getElementById('label-left'),
   right: document.getElementById('label-right')
 };
+const tuningDensityCellSizeInput = document.getElementById('tuning-density-cell-size');
+const tuningDensityThresholdInput = document.getElementById('tuning-density-threshold');
+const tuningCarriagewayMaxSeparationInput = document.getElementById('tuning-carriageway-max-separation');
 
 let hasAnchor = false;
 
@@ -107,6 +146,11 @@ let currentDevice = null;
 // Last-rendered map data, kept so a device that connects after a map is already
 // showing can be synced immediately (see setConnectedState).
 let lastBbox = null;
+// § Data ingestion and cleaning pipeline — lastRawWays is exactly what
+// Overpass returned; lastWays is processWays(lastRawWays), the deduped/
+// collapsed/tiered list actually rendered and hit-tested. Kept separate so
+// changing a tuning field can re-run the pipeline without a new fetch.
+let lastRawWays = [];
 let lastWays = [];
 let lastAnchorLat = null;
 let lastAnchorLon = null;
@@ -279,6 +323,32 @@ function toggleLabelZone(zone) {
   labelCheckboxes[zone].checked = labelZones[zone];
 }
 
+// § Experimental tuning fields — blank means "unset" (null), matching the
+// spec's "no defaults yet" -- Carriageway collapse / tier decluttering are
+// no-ops until a real number is entered. Carriageway separation needs the
+// data pipeline re-run (it changes which pairs collapse); the density
+// fields only affect the render-time tier-drop pass, so a plain refresh
+// is enough for those.
+function parseTuningValue(input) {
+  const value = input.value.trim();
+  if (value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
+tuningDensityCellSizeInput.addEventListener('change', () => {
+  tuningDensityCellSizePx = parseTuningValue(tuningDensityCellSizeInput);
+  refreshMap();
+});
+tuningDensityThresholdInput.addEventListener('change', () => {
+  tuningDensityThreshold = parseTuningValue(tuningDensityThresholdInput);
+  refreshMap();
+});
+tuningCarriagewayMaxSeparationInput.addEventListener('change', () => {
+  tuningCarriagewayMaxSeparationFt = parseTuningValue(tuningCarriagewayMaxSeparationInput);
+  reprocessWays();
+});
+
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const query = locationInput.value.trim();
@@ -410,8 +480,7 @@ function formatScaleLabel(index) {
   return `1 in = ${SCALE_PRESETS_FT[index]} ft`;
 }
 
-// § Data ingestion and cleaning pipeline, step 2 (Fetch). No dedup/collapse/tiering
-// yet (Phase 2) — every named, highway-tagged way in the box is rendered as-is.
+// § Data ingestion and cleaning pipeline, step 2 (Fetch).
 async function fetchWays(bbox) {
   const query = `[out:json][timeout:25];way["highway"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});out geom;`;
   const res = await fetch(OVERPASS_URL, {
@@ -421,6 +490,220 @@ async function fetchWays(bbox) {
   if (!res.ok) throw new Error('overpass-failed');
   const data = await res.json();
   return data.elements || [];
+}
+
+// § Data ingestion and cleaning pipeline, steps 3-7 (Group by name, Detect
+// carriageway pairs, Roadway/pedestrian dedup, Collapse to centerline,
+// Assign tier). Runs on every fetch and again whenever a tuning field
+// changes (see reprocessWays), since a different carriageway max-separation
+// changes which pairs collapse.
+function processWays(rawWays) {
+  const groups = groupWaysByName(rawWays);
+  const cleaned = [];
+
+  for (const ways of groups.values()) {
+    const pairs = detectCarriagewayPairs(ways);
+    // Dedup runs across the whole name group before collapse, per spec
+    // pipeline order -- in the rare case it drops one member of a detected
+    // pair, that pair just doesn't collapse; its survivor passes through
+    // untouched below like any other unpaired way.
+    const survivors = new Set(dedupRoadwayPedestrian(ways));
+    const collapsedMembers = new Set();
+
+    for (const [a, b] of pairs) {
+      if (survivors.has(a) && survivors.has(b)) {
+        cleaned.push(collapseToCenterline(a, b));
+        collapsedMembers.add(a);
+        collapsedMembers.add(b);
+      }
+    }
+    for (const way of survivors) {
+      if (!collapsedMembers.has(way)) cleaned.push(way);
+    }
+  }
+
+  for (const way of cleaned) {
+    way.tier = HIGHWAY_TIERS[way.tags && way.tags.highway] || MAX_TIER;
+  }
+  return cleaned;
+}
+
+function groupWaysByName(ways) {
+  const groups = new Map();
+  for (const way of ways) {
+    const name = way.tags && way.tags.name;
+    if (!name) continue;
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push(way);
+  }
+  return groups;
+}
+
+// § Same-name roadway/pedestrian de-duplication — footway/path/cycleway/
+// pedestrian/steps ways are dropped once at least one roadway-class way
+// shares their name (treated as a sidewalk/path running alongside the
+// road); a name with no roadway-class way at all is left untouched.
+function dedupRoadwayPedestrian(ways) {
+  const hasRoadway = ways.some((w) => ROADWAY_CLASSES.has(w.tags && w.tags.highway));
+  if (!hasRoadway) return ways.slice();
+  return ways.filter((w) => !PEDESTRIAN_CLASSES.has(w.tags && w.tags.highway));
+}
+
+// § Divided-road carriageway collapse — candidate-pair detection, in order
+// of reliability: explicit dual_carriageway tag, then oneway+opposite-
+// bearing+max-separation+consistent-overlap. Each way is matched at most
+// once (first candidate found), consistent with simple parallel pairs
+// rather than complex multi-way interchanges (explicitly out of scope).
+function detectCarriagewayPairs(ways) {
+  const pairs = [];
+  const used = new Set();
+  for (let i = 0; i < ways.length; i++) {
+    if (used.has(ways[i])) continue;
+    for (let j = i + 1; j < ways.length; j++) {
+      if (used.has(ways[j])) continue;
+      if (isCarriagewayPair(ways[i], ways[j])) {
+        pairs.push([ways[i], ways[j]]);
+        used.add(ways[i]);
+        used.add(ways[j]);
+        break;
+      }
+    }
+  }
+  return pairs;
+}
+
+function isCarriagewayPair(a, b) {
+  if (!a.geometry || a.geometry.length < 2 || !b.geometry || b.geometry.length < 2) return false;
+
+  // 1. Explicit tag — confirmed immediately, no geometric check needed.
+  if (a.tags && a.tags.dual_carriageway === 'yes' && b.tags && b.tags.dual_carriageway === 'yes') {
+    return true;
+  }
+
+  // 2. oneway + opposite direction — the standard mapping convention absent
+  // the explicit tag.
+  const aOneway = a.tags && a.tags.oneway === 'yes';
+  const bOneway = b.tags && b.tags.oneway === 'yes';
+  if (!aOneway || !bOneway) return false;
+  if (!bearingsAreOpposite(wayBearing(a), wayBearing(b))) return false;
+
+  // 3. Maximum separation — experimentally-tuned, no pairing at all until
+  // the user sets a value in the tuning surface (see Experimental tuning
+  // fields).
+  if (tuningCarriagewayMaxSeparationFt == null) return false;
+  const distances = vertexDistancesToWayFt(a, b);
+  if (!distances.length) return false;
+  const maxDist = Math.max(...distances);
+  if (maxDist > tuningCarriagewayMaxSeparationFt) return false;
+
+  // 4. Consistent overlap — a true parallel pair stays close to its average
+  // separation along its whole run; two ways that only touch near one end
+  // and diverge (sequential blocks, or a coincidental name collision) show
+  // wide swings instead.
+  const minDist = Math.min(...distances);
+  if (maxDist - minDist > tuningCarriagewayMaxSeparationFt * 0.75) return false;
+
+  return true;
+}
+
+// Bearing in degrees (0-360, 0=north, clockwise) of the straight line from a
+// way's first to last point. Equirectangular approximation -- plenty
+// accurate at street scale.
+function wayBearing(way) {
+  const a = way.geometry[0], b = way.geometry[way.geometry.length - 1];
+  const dx = (b.lon - a.lon) * Math.cos((a.lat * Math.PI) / 180);
+  const dy = b.lat - a.lat;
+  return ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
+}
+
+function bearingsAreOpposite(b1, b2, toleranceDeg = 30) {
+  const raw = ((b1 - b2) % 360 + 360) % 360;
+  const diff = Math.abs(raw - 180);
+  return diff <= toleranceDeg;
+}
+
+// Per-vertex nearest-point distance (in feet) from each point of `from` to
+// the polyline `to` -- a proxy for "perpendicular separation" without
+// needing true perpendicular-projection geometry.
+function vertexDistancesToWayFt(from, to) {
+  const distances = [];
+  for (const pt of from.geometry) {
+    let best = Infinity;
+    for (let i = 1; i < to.geometry.length; i++) {
+      const d = pointToSegmentDistanceFt(pt, to.geometry[i - 1], to.geometry[i]);
+      if (d < best) best = d;
+    }
+    if (Number.isFinite(best)) distances.push(best);
+  }
+  return distances;
+}
+
+function pointToSegmentDistanceFt(pt, segA, segB) {
+  const p = feetOffsetFrom(pt.lat, pt.lon, segA.lat, segA.lon);
+  const seg = feetOffsetFrom(segB.lat, segB.lon, segA.lat, segA.lon);
+  const lenSq = seg.eastFt * seg.eastFt + seg.northFt * seg.northFt;
+  if (lenSq === 0) return Math.hypot(p.eastFt, p.northFt);
+  let t = (p.eastFt * seg.eastFt + p.northFt * seg.northFt) / lenSq;
+  t = clamp(t, 0, 1);
+  return Math.hypot(p.eastFt - t * seg.eastFt, p.northFt - t * seg.northFt);
+}
+
+// § Divided-road carriageway collapse — resamples both ways to N evenly-
+// spaced points along arc length and averages corresponding pairs into one
+// centerline vertex. A deliberately lighter-weight substitute for the
+// Delaunay-triangulation-based approach full GIS tools use, appropriate
+// since our case is narrow (simple parallel pairs, not interchanges).
+function collapseToCenterline(a, b) {
+  const pointsA = resampleWay(a, CARRIAGEWAY_RESAMPLE_POINTS);
+  const pointsB = resampleWay(b, CARRIAGEWAY_RESAMPLE_POINTS);
+  // b commonly runs the opposite direction (antiparallel oneway pair) --
+  // reverse it so corresponding indices actually line up geographically.
+  const reversedB = bearingsAreOpposite(wayBearing(a), wayBearing(b))
+    ? pointsB.slice().reverse()
+    : pointsB;
+
+  const geometry = pointsA.map((pt, i) => ({
+    lat: (pt.lat + reversedB[i].lat) / 2,
+    lon: (pt.lon + reversedB[i].lon) / 2
+  }));
+
+  return { tags: a.tags, geometry };
+}
+
+// Resamples a way's polyline to n evenly-spaced points along its arc length
+// (cumulative straight-line distance between vertices) -- good enough at
+// street scale, no need for geodesic precision.
+function resampleWay(way, n) {
+  const geom = way.geometry;
+  const cumulative = [0];
+  for (let i = 1; i < geom.length; i++) {
+    const { eastFt, northFt } = feetOffsetFrom(geom[i].lat, geom[i].lon, geom[i - 1].lat, geom[i - 1].lon);
+    cumulative.push(cumulative[i - 1] + Math.hypot(eastFt, northFt));
+  }
+  const totalLength = cumulative[cumulative.length - 1];
+
+  const points = [];
+  for (let i = 0; i < n; i++) {
+    const target = (totalLength * i) / (n - 1);
+    let seg = 1;
+    while (seg < cumulative.length - 1 && cumulative[seg] < target) seg++;
+    const segStart = cumulative[seg - 1], segEnd = cumulative[seg];
+    const t = segEnd > segStart ? (target - segStart) / (segEnd - segStart) : 0;
+    const p0 = geom[seg - 1], p1 = geom[seg];
+    points.push({
+      lat: p0.lat + (p1.lat - p0.lat) * t,
+      lon: p0.lon + (p1.lon - p0.lon) * t
+    });
+  }
+  return points;
+}
+
+// Re-runs the pipeline against the last raw fetch (no new Overpass request)
+// and re-renders -- used when a tuning field changes.
+function reprocessWays() {
+  if (!lastRawWays.length) return;
+  lastWays = processWays(lastRawWays);
+  refreshMap();
 }
 
 // Projects into the map's sub-rectangle of the SVG canvas (see svgMapRect),
@@ -475,7 +758,8 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
   }
 
   lastBbox = bbox;
-  lastWays = ways;
+  lastRawWays = ways;
+  lastWays = processWays(lastRawWays);
   lastAnchorLat = lat;
   lastAnchorLon = lon;
   lastAnchorName = displayName;
@@ -651,8 +935,14 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   group.setAttribute('clip-path', 'url(#map-clip)');
   mapSvg.appendChild(group);
 
+  // § Map density evaluation and tier-based decluttering — reruns every
+  // render (pan/zoom/scale all call refreshMap); ways below the current
+  // cutoff are skipped entirely rather than hidden via CSS, which is just
+  // as cheap at this scale (a few hundred ways, one filter pass already
+  // walked below) without needing a separate class-swap mechanism.
+  const visibleMaxTier = computeVisibleMaxTier(bbox, ways);
   for (const way of ways) {
-    if (!way.geometry || way.geometry.length < 2) continue;
+    if (way.tier > visibleMaxTier || !way.geometry || way.geometry.length < 2) continue;
     const points = way.geometry
       .map((pt) => {
         const { x, y } = projectToSvg(pt.lat, pt.lon, bbox);
@@ -662,6 +952,7 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
     const line = document.createElementNS(svgNs, 'polyline');
     line.setAttribute('points', points);
     line.setAttribute('class', 'street');
+    line.setAttribute('data-tier', String(way.tier));
     group.appendChild(line);
   }
 
@@ -672,6 +963,69 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   marker.setAttribute('r', 4);
   marker.setAttribute('class', 'anchor-poi');
   group.appendChild(marker);
+}
+
+// § Map density evaluation and tier-based decluttering — escalating
+// tier-drop: start showing every tier and hide the least important (7)
+// first, rechecking density each step, until density clears the threshold
+// or tier 1 is reached. No-op (show everything) until both tuning fields
+// are set.
+function computeVisibleMaxTier(viewportBbox, ways) {
+  if (tuningDensityCellSizePx == null || tuningDensityThreshold == null) return MAX_TIER;
+  for (let maxTier = MAX_TIER; maxTier >= 1; maxTier--) {
+    const visible = ways.filter((w) => w.tier <= maxTier);
+    if (computeMaxCellDensity(viewportBbox, visible) <= tuningDensityThreshold) return maxTier;
+  }
+  return 1;
+}
+
+// Grid overlay sized by tuningDensityCellSizePx over the map's current
+// on-screen sub-rect; counts distinct street *names* per cell (not raw way
+// segments, since one named street is often split into many ways at
+// intersections and would otherwise overstate its own density) and returns
+// the busiest cell's count.
+function computeMaxCellDensity(viewportBbox, ways) {
+  const rect = svgMapRect();
+  const cellSize = tuningDensityCellSizePx;
+  const cols = Math.max(1, Math.ceil(rect.width / cellSize));
+  const rows = Math.max(1, Math.ceil(rect.height / cellSize));
+  const cellNames = new Map();
+
+  for (const way of ways) {
+    const name = way.tags && way.tags.name;
+    if (!name || !way.geometry || way.geometry.length < 2) continue;
+    let prev = null;
+    for (const pt of way.geometry) {
+      const p = projectToSvg(pt.lat, pt.lon, viewportBbox);
+      if (prev) markCellsAlongLine(prev, p, rect, cellSize, cols, rows, cellNames, name);
+      prev = p;
+    }
+  }
+
+  let maxDensity = 0;
+  for (const names of cellNames.values()) {
+    if (names.size > maxDensity) maxDensity = names.size;
+  }
+  return maxDensity;
+}
+
+// Samples points along a line at roughly half-cell-size intervals (simpler
+// than a true line-vs-grid-cell traversal, plenty precise at this scale)
+// and records the given street name into every density cell touched.
+function markCellsAlongLine(p0, p1, rect, cellSize, cols, rows, cellNames, name) {
+  const dist = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+  const steps = Math.max(1, Math.ceil(dist / (cellSize / 2)));
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = p0.x + (p1.x - p0.x) * t;
+    const y = p0.y + (p1.y - p0.y) * t;
+    const col = Math.floor((x - rect.x) / cellSize);
+    const row = Math.floor((y - rect.y) / cellSize);
+    if (col < 0 || col >= cols || row < 0 || row >= rows) continue;
+    const key = col + ',' + row;
+    if (!cellNames.has(key)) cellNames.set(key, new Set());
+    cellNames.get(key).add(name);
+  }
 }
 
 // Centers the on-screen cursor circle on the current grid cell. Position is
@@ -706,7 +1060,12 @@ function currentObjectNames() {
   const cursorGrid = cursorGridPosition(viewportBbox);
   if (!cursorGrid) return null;
   const names = new Set();
+  // § Map density evaluation and tier-based decluttering — a street hidden
+  // by decluttering shouldn't be "feelable" via the cursor either, so hit
+  // testing respects the same tier cutoff as rendering.
+  const visibleMaxTier = computeVisibleMaxTier(viewportBbox, lastWays);
   for (const way of lastWays) {
+    if (way.tier > visibleMaxTier) continue;
     const name = way.tags && way.tags.name;
     if (!name || !way.geometry || way.geometry.length < 2) continue;
     let prev = null;
@@ -1009,8 +1368,10 @@ function packPixelsToHex(pixels, displayW, displayH, numRows) {
 
 // Reprojects lon/lat directly to the device's native dot-grid resolution
 // (not downscaled from the on-screen 600x400 SVG) and rasterizes streets +
-// anchor marker with the Bresenham helpers above. No dedup/tiering yet
-// (Phase 2) — same raw, unfiltered data as the on-screen render.
+// anchor marker with the Bresenham helpers above. `ways` is already the
+// deduped/collapsed/tiered output of processWays (see showAnchor); tier
+// decluttering is applied below via the same computeVisibleMaxTier used
+// on-screen.
 function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displayH, cursor) {
   const pixels = new Uint8Array(displayW * displayH);
   // § Braille labels — project into the device-pixel sub-rect matching
@@ -1041,8 +1402,12 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
   // through a reserved zone on its way to an off-screen endpoint.
   const rectMaxX = rectX + rectW;
   const rectMaxY = rectY + rectH;
+  // § Map density evaluation and tier-based decluttering — same cutoff as
+  // the on-screen render, so the tactile picture and the SVG never disagree
+  // about which streets are currently shown.
+  const visibleMaxTier = computeVisibleMaxTier(bbox, ways);
   for (const way of ways) {
-    if (!way.geometry || way.geometry.length < 2) continue;
+    if (way.tier > visibleMaxTier || !way.geometry || way.geometry.length < 2) continue;
     let prev = null;
     for (const pt of way.geometry) {
       const p = project(pt.lat, pt.lon);

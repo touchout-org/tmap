@@ -69,6 +69,23 @@
     <button id="btn-labels-close" type="button">Close</button>
   </dialog>
 
+  <hr>
+  <fieldset id="tuning-fields">
+    <legend>Experimental tuning (developer use only)</legend>
+    <div>
+      <label for="tuning-density-cell-size">Density cell size (display pixels)</label>
+      <input type="number" id="tuning-density-cell-size" min="1" step="1">
+    </div>
+    <div>
+      <label for="tuning-density-threshold">Density threshold (streets per cell)</label>
+      <input type="number" id="tuning-density-threshold" min="1" step="1">
+    </div>
+    <div>
+      <label for="tuning-carriageway-max-separation">Carriageway max separation (feet)</label>
+      <input type="number" id="tuning-carriageway-max-separation" min="1" step="1">
+    </div>
+  </fieldset>
+
   <footer>
     <p id="build-id">Build: __BUILD_TIME__</p>
   </footer>
