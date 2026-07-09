@@ -35,6 +35,7 @@ const mapSvg = document.getElementById('map');
 const messageDisplay = document.getElementById('message-display');
 const btnConnect = document.getElementById('btn-connect');
 const btnDisconnect = document.getElementById('btn-disconnect');
+const deviceInfo = document.getElementById('device-info');
 
 let hasAnchor = false;
 
@@ -395,6 +396,12 @@ function setConnectedState(device) {
   currentDevice = device;
   btnConnect.hidden = true;
   btnDisconnect.hidden = false;
+  // Diagnostic: show what the device actually reports for its grid
+  // dimensions, rather than trusting our assumed 30x10 (60x40 dots).
+  deviceInfo.textContent =
+    `Device: numberCellColumns=${device.numberCellColumns}, ` +
+    `numberCellRows=${device.numberCellRows}, ` +
+    `numberBrailleCellColumns=${device.numberBrailleCellColumns}`;
   // Diagnostic: delay just the message-line device write by 1s after
   // connecting, to test whether writing it immediately puts the device into
   // a bad state that then corrupts the graphic write that follows.
@@ -411,6 +418,7 @@ function setDisconnectedState() {
   currentDevice = null;
   btnConnect.hidden = false;
   btnDisconnect.hidden = true;
+  deviceInfo.textContent = '';
   setMessage('Dot Pad disconnected.');
 }
 
