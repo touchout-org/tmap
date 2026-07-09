@@ -89,12 +89,16 @@ if (!isChrome()) {
 // Messages are kept terse throughout: the device only has 20 cells to show
 // them in, and there's no way to pan to see the rest of a longer message yet.
 function setMessage(text, deviceDelayMs = 0) {
+  // Full text always goes on-screen (and so is what speech/ARIA announces).
+  // Only the device copy is truncated, since that's the only channel with
+  // an actual 20-cell physical limit.
   messageDisplay.textContent = text;
   if (currentDevice) {
+    const deviceText = truncateMessage(text, currentDevice.numberBrailleCellColumns);
     if (deviceDelayMs > 0) {
-      setTimeout(() => sendTextToDevice(text, currentDevice), deviceDelayMs);
+      setTimeout(() => sendTextToDevice(deviceText, currentDevice), deviceDelayMs);
     } else {
-      sendTextToDevice(text, currentDevice);
+      sendTextToDevice(deviceText, currentDevice);
     }
   }
 }
@@ -239,7 +243,7 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
     sendGraphicToDevice(currentDevice);
   }
 
-  setMessage(truncateMessage(displayName));
+  setMessage(displayName);
 }
 
 function clamp(value, min, max) {
@@ -326,7 +330,7 @@ function moveCursor(dx, dy) {
   updateCursorVisual();
 
   const names = currentObjectNames();
-  setMessage(names ? truncateMessage(names) : 'No street');
+  setMessage(names || 'No street');
 
   if (currentDevice) {
     sendGraphicToDevice(currentDevice);
