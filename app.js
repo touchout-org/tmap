@@ -41,6 +41,7 @@ const MILES_TO_METERS = 1609.344;
 const DOT_GRID_WIDTH = 60;
 const DOT_GRID_HEIGHT = 40;
 const SVG_UNITS_PER_DOT = SVG_WIDTH / DOT_GRID_WIDTH; // 10
+const CURSOR_SVG_RADIUS = SVG_UNITS_PER_DOT * 1.5;
 // § Scale behavior / § Settings — the 9 Traditional Scale presets ("1 in =
 // Y ft"). DOT_PAD_DISPLAY_WIDTH_INCHES is the tactile display's measured
 // width: 6 3/16 in (height is 4 1/8 in — exactly a 3:2 ratio, matching
@@ -114,7 +115,7 @@ let cursorLat = null;
 let cursorLon = null;
 const cursorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
 cursorSvg.setAttribute('class', 'cursor');
-cursorSvg.setAttribute('r', SVG_UNITS_PER_DOT * 1.5);
+cursorSvg.setAttribute('r', CURSOR_SVG_RADIUS);
 cursorSvg.hidden = true;
 
 // § Browser check
@@ -415,14 +416,64 @@ function clamp(value, min, max) {
 }
 
 // Central re-render: recomputes the viewport bbox, redraws the on-screen
-// map, re-centers the cursor, and refreshes the tactile display if
+// map, repositions the cursor, and refreshes the tactile display if
 // connected. Called after a new search, a pan, or a scale change.
-//
-// Cursor re-centers on every viewport change rather than tracking a fixed
-// real-world point through the pan/scale -- simpler, and the spec leaves
-// this interaction open ("we will refine this behavior as we experiment
-// with the UI"). Revisit if that turns out to feel wrong in practice.
+
+// § Pan Behavior — "unless rescaling forces a pan due to edge-of-map": if
+// the cursor's fixed real-world position would fall outside the viewport
+// after whatever just changed it (scale, or a pan that happens to leave an
+// already-near-edge cursor out of view), shift the viewport center just
+// enough to bring it back on screen, the same way an explicit pan would.
+// Falls back to leaving it clamped to the display edge (see
+// cursorGridPosition) only if the fetched data itself doesn't allow enough
+// room to shift into -- the one case where map-fixed and display-fixed
+// genuinely can't both hold, and map-fixed wins.
+const VIEW_MARGIN_UNITS = 2;
+function keepCursorInView() {
+  if (cursorLat === null || !lastBbox) return;
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return;
+  const p = projectToGrid(cursorLat, cursorLon, viewportBbox);
+
+  let overflowX = 0;
+  if (p.x < 0) overflowX = p.x - VIEW_MARGIN_UNITS;
+  else if (p.x > DOT_GRID_WIDTH - 1) overflowX = p.x - (DOT_GRID_WIDTH - 1) + VIEW_MARGIN_UNITS;
+
+  let overflowY = 0;
+  if (p.y < 0) overflowY = p.y - VIEW_MARGIN_UNITS;
+  else if (p.y > DOT_GRID_HEIGHT - 1) overflowY = p.y - (DOT_GRID_HEIGHT - 1) + VIEW_MARGIN_UNITS;
+
+  if (overflowX === 0 && overflowY === 0) return;
+
+  const { widthFt, heightFt } = viewportSizeFeet();
+  const ftPerUnitX = widthFt / DOT_GRID_WIDTH;
+  const ftPerUnitY = heightFt / DOT_GRID_HEIGHT;
+
+  let newLat = viewportCenterLat - feetToLatDelta(overflowY * ftPerUnitY);
+  let newLon = viewportCenterLon + feetToLonDelta(overflowX * ftPerUnitX, viewportCenterLat);
+
+  // Clamp the shift to what the fetched data allows, degrading to centering
+  // within it if the viewport itself is larger than the fetched region.
+  const halfLat = feetToLatDelta(heightFt / 2);
+  const minCenterLat = lastBbox.south + halfLat;
+  const maxCenterLat = lastBbox.north - halfLat;
+  newLat = minCenterLat <= maxCenterLat
+    ? clamp(newLat, minCenterLat, maxCenterLat)
+    : (lastBbox.south + lastBbox.north) / 2;
+
+  const halfLon = feetToLonDelta(widthFt / 2, newLat);
+  const minCenterLon = lastBbox.west + halfLon;
+  const maxCenterLon = lastBbox.east - halfLon;
+  newLon = minCenterLon <= maxCenterLon
+    ? clamp(newLon, minCenterLon, maxCenterLon)
+    : (lastBbox.west + lastBbox.east) / 2;
+
+  viewportCenterLat = newLat;
+  viewportCenterLon = newLon;
+}
+
 function refreshMap() {
+  keepCursorInView();
   const viewportBbox = getViewportBbox();
   if (!viewportBbox) return;
 
@@ -468,13 +519,17 @@ function renderMap(bbox, ways, anchorLat, anchorLon) {
   mapSvg.appendChild(cursorSvg);
 }
 
-// Centers the on-screen cursor circle on the current grid cell.
+// Centers the on-screen cursor circle on the current grid cell. Position is
+// additionally clamped by the circle's own radius so it always renders
+// fully intact, never clipped by the SVG viewBox edge -- this is purely a
+// rendering safeguard on top of cursorGridPosition's grid-space clamp
+// (which keepCursorInView already tries hard to avoid ever needing).
 function updateCursorVisual() {
   const viewportBbox = getViewportBbox();
   const grid = cursorGridPosition(viewportBbox);
   if (!grid) return;
-  const cx = (grid.x + 0.5) * SVG_UNITS_PER_DOT;
-  const cy = (grid.y + 0.5) * SVG_UNITS_PER_DOT;
+  const cx = clamp((grid.x + 0.5) * SVG_UNITS_PER_DOT, CURSOR_SVG_RADIUS, SVG_WIDTH - CURSOR_SVG_RADIUS);
+  const cy = clamp((grid.y + 0.5) * SVG_UNITS_PER_DOT, CURSOR_SVG_RADIUS, SVG_HEIGHT - CURSOR_SVG_RADIUS);
   cursorSvg.setAttribute('cx', cx.toFixed(1));
   cursorSvg.setAttribute('cy', cy.toFixed(1));
 }
@@ -780,8 +835,11 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
     // Scale from the fixed DOT_GRID_WIDTH/HEIGHT cursor space into this
     // device's own reported dimensions (equal in practice, per the
     // on-connect device-info diagnostic, but kept independent).
-    const cx = cursor.x * (displayW / DOT_GRID_WIDTH);
-    const cy = cursor.y * (displayH / DOT_GRID_HEIGHT);
+    // Clamped so the full 8-dot ring (offsets -1..+2, see drawCursorPixels)
+    // always fits on the grid rather than getting dots silently dropped by
+    // setGridPixel's own bounds check at the extreme edge.
+    const cx = clamp(cursor.x * (displayW / DOT_GRID_WIDTH), 1, displayW - 3);
+    const cy = clamp(cursor.y * (displayH / DOT_GRID_HEIGHT), 1, displayH - 3);
     drawCursorPixels(pixels, displayW, displayH, cx, cy);
   }
 
