@@ -63,14 +63,10 @@ if (!isChrome()) {
 
 // § Message display architecture — the on-screen field is the single source of
 // truth; it updates first, then pushes to the Dot Pad's 20-cell message display.
-function setMessage(text, deviceDelayMs = 0) {
+function setMessage(text) {
   messageDisplay.textContent = text;
   if (currentDevice) {
-    if (deviceDelayMs > 0) {
-      setTimeout(() => sendTextToDevice(text, currentDevice), deviceDelayMs);
-    } else {
-      sendTextToDevice(text, currentDevice);
-    }
+    sendTextToDevice(text, currentDevice);
   }
 }
 
@@ -402,16 +398,20 @@ function setConnectedState(device) {
     `Device: numberCellColumns=${device.numberCellColumns}, ` +
     `numberCellRows=${device.numberCellRows}, ` +
     `numberBrailleCellColumns=${device.numberBrailleCellColumns}`;
-  // Diagnostic: delay just the message-line device write by 1s after
-  // connecting, to test whether writing it immediately puts the device into
-  // a bad state that then corrupts the graphic write that follows.
-  if (lastBbox) {
-    setMessage('Dot Pad connected.', 1000);
-    sendGraphicToDevice(device);
-  } else {
-    setMessage('Dot Pad connected. Showing 6x4 test grid.', 1000);
-    sendTestGridToDevice(device);
-  }
+  // Diagnostic: dimensions confirmed correct (30x10) and the message-only
+  // delay didn't fix the deformed grid, so now test the broader theory --
+  // wait 1s after connecting before writing anything at all to the device,
+  // message or graphic, in case writing immediately after BLE connect
+  // establishes puts the device into a bad state.
+  setTimeout(() => {
+    if (lastBbox) {
+      setMessage('Dot Pad connected.');
+      sendGraphicToDevice(device);
+    } else {
+      setMessage('Dot Pad connected. Showing 6x4 test grid.');
+      sendTestGridToDevice(device);
+    }
+  }, 1000);
 }
 
 function setDisconnectedState() {
