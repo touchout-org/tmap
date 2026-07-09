@@ -522,6 +522,18 @@ function moveCursor(dx, dy) {
   if (!current) return;
   const newGridX = clamp(current.x + dx, 0, DOT_GRID_WIDTH - 1);
   const newGridY = clamp(current.y + dy, 0, DOT_GRID_HEIGHT - 1);
+
+  // § Cursor and hit testing — hitting the edge of the viewport pans
+  // instead of stopping there, inheriting normal Pan Behavior as-is
+  // (including Edge of Map, tone and all, if that pan would itself exceed
+  // the fetched data). moveCursor is always called with exactly one of
+  // dx/dy nonzero, so the sign of whichever is nonzero gives the direction.
+  if (newGridX === current.x && newGridY === current.y) {
+    const direction = dx < 0 ? 'west' : dx > 0 ? 'east' : dy < 0 ? 'north' : 'south';
+    panMap(direction);
+    return;
+  }
+
   const newPos = gridToLatLon(newGridX, newGridY, viewportBbox);
   cursorLat = newPos.lat;
   cursorLon = newPos.lon;
