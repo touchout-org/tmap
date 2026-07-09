@@ -93,6 +93,31 @@ body {
   stroke-width: 1.5;
 }
 
+/* § Braille labels — zones render as empty bordered regions until label
+   content (Phase 4) exists. */
+#map .label-zone {
+  fill: #eee;
+  stroke: #bbb;
+  stroke-dasharray: 4 2;
+}
+
+#controls-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+#labels-dialog {
+  border: 1px solid #999;
+  border-radius: 4px;
+  padding: 1rem 1.25rem;
+}
+
+#labels-dialog div {
+  margin: 0.4rem 0;
+}
+
 #message-display {
   margin-top: 0.5rem;
   min-height: 1.4em;

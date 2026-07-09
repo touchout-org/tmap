@@ -42,9 +42,32 @@
   <div id="controls-row">
     <button id="btn-connect" type="button">Connect Dot Pad</button>
     <button id="btn-disconnect" type="button" hidden>Disconnect Dot Pad</button>
+    <button id="btn-labels" type="button">Braille Labels...</button>
   </div>
 
   <p id="device-info"></p>
+
+  <dialog id="labels-dialog" aria-labelledby="labels-dialog-heading">
+    <h3 id="labels-dialog-heading">Braille Labels</h3>
+    <p>Choose which edges of the display show braille street labels.</p>
+    <div>
+      <input type="checkbox" id="label-top">
+      <label for="label-top">Top</label>
+    </div>
+    <div>
+      <input type="checkbox" id="label-bottom">
+      <label for="label-bottom">Bottom</label>
+    </div>
+    <div>
+      <input type="checkbox" id="label-left">
+      <label for="label-left">Left</label>
+    </div>
+    <div>
+      <input type="checkbox" id="label-right">
+      <label for="label-right">Right</label>
+    </div>
+    <button id="btn-labels-close" type="button">Close</button>
+  </dialog>
 
   <footer>
     <p id="build-id">Build: __BUILD_TIME__</p>

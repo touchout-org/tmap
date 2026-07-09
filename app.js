@@ -42,6 +42,14 @@ const DOT_GRID_WIDTH = 60;
 const DOT_GRID_HEIGHT = 40;
 const SVG_UNITS_PER_DOT = SVG_WIDTH / DOT_GRID_WIDTH; // 10
 const CURSOR_SVG_RADIUS = SVG_UNITS_PER_DOT * 1.5;
+
+// § Braille labels — label zones are windows adjacent to the map viewbox,
+// carved out of the fixed DOT_GRID_WIDTH/HEIGHT canvas rather than growing
+// it (the physical Dot Pad grid never changes size). Left/right zones need
+// 10 dot columns each (6 for 3 braille characters + 2 kerning + 2 padding);
+// top/bottom need 5 dot rows each (3 for the braille dots + 2 padding).
+const LABEL_ZONE_DOT_COLS = 10;
+const LABEL_ZONE_DOT_ROWS = 5;
 // § Scale behavior / § Settings — the 9 Traditional Scale presets ("1 in =
 // Y ft"). DOT_PAD_DISPLAY_WIDTH_INCHES is the tactile display's measured
 // width: 6 3/16 in (height is 4 1/8 in — exactly a 3:2 ratio, matching
@@ -78,6 +86,15 @@ const btnPanSouth = document.getElementById('btn-pan-south');
 const btnPanEast = document.getElementById('btn-pan-east');
 const btnPanWest = document.getElementById('btn-pan-west');
 const panButtons = [btnPanNorth, btnPanSouth, btnPanEast, btnPanWest];
+const btnLabels = document.getElementById('btn-labels');
+const labelsDialog = document.getElementById('labels-dialog');
+const btnLabelsClose = document.getElementById('btn-labels-close');
+const labelCheckboxes = {
+  top: document.getElementById('label-top'),
+  bottom: document.getElementById('label-bottom'),
+  left: document.getElementById('label-left'),
+  right: document.getElementById('label-right')
+};
 
 let hasAnchor = false;
 
@@ -101,6 +118,34 @@ let lastAnchorName = null;
 let viewportCenterLat = null;
 let viewportCenterLon = null;
 let scaleIndex = DEFAULT_SCALE_INDEX;
+
+// § Braille labels / § Settings — shared toggle state for the 4 label
+// zones, driven equally by the dialog checkboxes and the i/j/k/l hotkeys
+// (see spec § Command / hotkey mapping). [none checked] is the default.
+let labelZones = { top: false, bottom: false, left: false, right: false };
+
+// The map's effective drawable region within the fixed DOT_GRID_WIDTH x
+// DOT_GRID_HEIGHT canvas, after carving out whichever label zones are
+// active. All grid/SVG/device projections for streets, cursor, and hit
+// testing operate within this sub-region rather than the full canvas.
+function mapGridBounds() {
+  const offsetX = labelZones.left ? LABEL_ZONE_DOT_COLS : 0;
+  const offsetY = labelZones.top ? LABEL_ZONE_DOT_ROWS : 0;
+  const width = DOT_GRID_WIDTH - offsetX - (labelZones.right ? LABEL_ZONE_DOT_COLS : 0);
+  const height = DOT_GRID_HEIGHT - offsetY - (labelZones.bottom ? LABEL_ZONE_DOT_ROWS : 0);
+  return { offsetX, offsetY, width, height };
+}
+
+// Same region, in on-screen SVG units (see SVG_UNITS_PER_DOT).
+function svgMapRect() {
+  const b = mapGridBounds();
+  return {
+    x: b.offsetX * SVG_UNITS_PER_DOT,
+    y: b.offsetY * SVG_UNITS_PER_DOT,
+    width: b.width * SVG_UNITS_PER_DOT,
+    height: b.height * SVG_UNITS_PER_DOT
+  };
+}
 
 // Cursor position, stored as a real-world lat/lon (not grid units) so it
 // stays fixed relative to the map through pan and scale changes rather than
@@ -206,6 +251,34 @@ btnPanSouth.addEventListener('click', () => panMap('south'));
 btnPanEast.addEventListener('click', () => panMap('east'));
 btnPanWest.addEventListener('click', () => panMap('west'));
 
+// § Braille labels — the dialog checkboxes are a live view of the shared
+// labelZones state (see setLabelZone), not a separately-synced copy: they're
+// set to match on every open, matching the i/j/k/l hotkeys' effect too.
+btnLabels.addEventListener('click', () => {
+  for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
+  labelsDialog.showModal();
+});
+btnLabelsClose.addEventListener('click', () => labelsDialog.close());
+for (const zone in labelCheckboxes) {
+  labelCheckboxes[zone].addEventListener('change', () => setLabelZone(zone, labelCheckboxes[zone].checked));
+}
+
+// § Braille labels — shared toggle used by both the dialog checkboxes and
+// the i/j/k/l hotkeys. Reports the new state in the message field per
+// § Command / hotkey mapping, then re-renders (zone geometry changed).
+function setLabelZone(zone, value) {
+  if (labelZones[zone] === value) return;
+  labelZones[zone] = value;
+  setMessage(`${zone} labels ${value ? 'on' : 'off'}`);
+  refreshMap();
+}
+
+function toggleLabelZone(zone) {
+  setLabelZone(zone, !labelZones[zone]);
+  // Keep the checkbox in sync even if the dialog happens to be open right now.
+  labelCheckboxes[zone].checked = labelZones[zone];
+}
+
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const query = locationInput.value.trim();
@@ -299,11 +372,17 @@ function feetOffsetFrom(lat, lon, fromLat, fromLon) {
   return { eastFt, northFt };
 }
 
-// § Scale behavior — current viewport width/height in feet, from the
-// selected preset. Height follows the 3x2 display ratio (see SVG_HEIGHT/SVG_WIDTH).
+// § Scale behavior / § Braille labels — current viewport width/height in
+// feet, from the selected preset, applied per-axis via the Dot Pad's
+// measured (isotropic, ~10 DPI) dot pitch rather than a fixed 3x2 ratio --
+// necessary now that active label zones can make the map's sub-region
+// narrower and/or shorter than the full physical display, including
+// asymmetric cases (e.g. only a top zone) that no longer keep a 3x2 shape.
 function viewportSizeFeet() {
-  const widthFt = SCALE_PRESETS_FT[scaleIndex] * DOT_PAD_DISPLAY_WIDTH_INCHES;
-  const heightFt = widthFt * (SVG_HEIGHT / SVG_WIDTH);
+  const b = mapGridBounds();
+  const inchesPerDot = DOT_PAD_DISPLAY_WIDTH_INCHES / DOT_GRID_WIDTH;
+  const widthFt = SCALE_PRESETS_FT[scaleIndex] * (b.width * inchesPerDot);
+  const heightFt = SCALE_PRESETS_FT[scaleIndex] * (b.height * inchesPerDot);
   return { widthFt, heightFt };
 }
 
@@ -344,24 +423,32 @@ async function fetchWays(bbox) {
   return data.elements || [];
 }
 
+// Projects into the map's sub-rectangle of the SVG canvas (see svgMapRect),
+// not the full 600x400 canvas -- active label zones shrink and offset it.
 function projectToSvg(lat, lon, bbox) {
-  const x = ((lon - bbox.west) / (bbox.east - bbox.west)) * SVG_WIDTH;
-  const y = ((bbox.north - lat) / (bbox.north - bbox.south)) * SVG_HEIGHT;
+  const rect = svgMapRect();
+  const x = rect.x + ((lon - bbox.west) / (bbox.east - bbox.west)) * rect.width;
+  const y = rect.y + ((bbox.north - lat) / (bbox.north - bbox.south)) * rect.height;
   return { x, y };
 }
 
 // Same -0.5 pixel-center convention as rasterizeMapToPixels, so cursor/hit
-// testing lines up with what the tactile display actually shows.
+// testing lines up with what the tactile display actually shows. Grid
+// space here is map-relative (0..mapGridBounds().width/height), not the
+// full DOT_GRID_WIDTH/HEIGHT canvas -- see mapGridBounds.
 function projectToGrid(lat, lon, bbox) {
-  const x = ((lon - bbox.west) / (bbox.east - bbox.west)) * DOT_GRID_WIDTH - 0.5;
-  const y = ((bbox.north - lat) / (bbox.north - bbox.south)) * DOT_GRID_HEIGHT - 0.5;
+  const b = mapGridBounds();
+  const x = ((lon - bbox.west) / (bbox.east - bbox.west)) * b.width - 0.5;
+  const y = ((bbox.north - lat) / (bbox.north - bbox.south)) * b.height - 0.5;
   return { x, y };
 }
 
-// Inverse of projectToGrid: grid position -> lat/lon, for the same bbox.
+// Inverse of projectToGrid: map-relative grid position -> lat/lon, for the
+// same bbox.
 function gridToLatLon(gridX, gridY, bbox) {
-  const lon = bbox.west + ((gridX + 0.5) / DOT_GRID_WIDTH) * (bbox.east - bbox.west);
-  const lat = bbox.north - ((gridY + 0.5) / DOT_GRID_HEIGHT) * (bbox.north - bbox.south);
+  const b = mapGridBounds();
+  const lon = bbox.west + ((gridX + 0.5) / b.width) * (bbox.east - bbox.west);
+  const lat = bbox.north - ((gridY + 0.5) / b.height) * (bbox.north - bbox.south);
   return { lat, lon };
 }
 
@@ -369,10 +456,11 @@ function gridToLatLon(gridX, gridY, bbox) {
 // what's actually on screen. Returns null if there's no map or viewport yet.
 function cursorGridPosition(viewportBbox) {
   if (cursorLat === null || !viewportBbox) return null;
+  const b = mapGridBounds();
   const p = projectToGrid(cursorLat, cursorLon, viewportBbox);
   return {
-    x: clamp(Math.round(p.x), 0, DOT_GRID_WIDTH - 1),
-    y: clamp(Math.round(p.y), 0, DOT_GRID_HEIGHT - 1)
+    x: clamp(Math.round(p.x), 0, b.width - 1),
+    y: clamp(Math.round(p.y), 0, b.height - 1)
   };
 }
 
@@ -433,21 +521,22 @@ function keepCursorInView() {
   if (cursorLat === null || !lastBbox) return;
   const viewportBbox = getViewportBbox();
   if (!viewportBbox) return;
+  const b = mapGridBounds();
   const p = projectToGrid(cursorLat, cursorLon, viewportBbox);
 
   let overflowX = 0;
   if (p.x < 0) overflowX = p.x - VIEW_MARGIN_UNITS;
-  else if (p.x > DOT_GRID_WIDTH - 1) overflowX = p.x - (DOT_GRID_WIDTH - 1) + VIEW_MARGIN_UNITS;
+  else if (p.x > b.width - 1) overflowX = p.x - (b.width - 1) + VIEW_MARGIN_UNITS;
 
   let overflowY = 0;
   if (p.y < 0) overflowY = p.y - VIEW_MARGIN_UNITS;
-  else if (p.y > DOT_GRID_HEIGHT - 1) overflowY = p.y - (DOT_GRID_HEIGHT - 1) + VIEW_MARGIN_UNITS;
+  else if (p.y > b.height - 1) overflowY = p.y - (b.height - 1) + VIEW_MARGIN_UNITS;
 
   if (overflowX === 0 && overflowY === 0) return;
 
   const { widthFt, heightFt } = viewportSizeFeet();
-  const ftPerUnitX = widthFt / DOT_GRID_WIDTH;
-  const ftPerUnitY = heightFt / DOT_GRID_HEIGHT;
+  const ftPerUnitX = widthFt / b.width;
+  const ftPerUnitY = heightFt / b.height;
 
   let newLat = viewportCenterLat - feetToLatDelta(overflowY * ftPerUnitY);
   let newLon = viewportCenterLon + feetToLonDelta(overflowX * ftPerUnitX, viewportCenterLat);
@@ -475,9 +564,12 @@ function keepCursorInView() {
 function refreshMap() {
   keepCursorInView();
   const viewportBbox = getViewportBbox();
-  if (!viewportBbox) return;
 
-  renderMap(viewportBbox, lastWays, lastAnchorLat, lastAnchorLon);
+  // § Braille labels — zones redraw even with no map loaded yet (toggling
+  // before a search is allowed), so renderScene runs unconditionally;
+  // street/anchor/cursor positioning still needs a real viewport.
+  renderScene(viewportBbox);
+  if (!viewportBbox) return;
 
   // Cursor keeps its real-world position (cursorLat/cursorLon) through pan
   // and scale changes -- just reproject it against the new viewport, rather
@@ -489,10 +581,54 @@ function refreshMap() {
   }
 }
 
-function renderMap(bbox, ways, anchorLat, anchorLon) {
+// Clears and redraws the whole on-screen SVG: label zones first (always),
+// then streets/anchor within the map sub-rect (only once a map is loaded),
+// then the cursor on top.
+function renderScene(viewportBbox) {
   mapSvg.innerHTML = '';
   const svgNs = 'http://www.w3.org/2000/svg';
 
+  drawLabelZoneRects(svgNs);
+
+  if (viewportBbox) {
+    renderStreetsAndAnchor(svgNs, viewportBbox, lastWays, lastAnchorLat, lastAnchorLon);
+    // Cursor is a single reused element, drawn last (on top). Only appended
+    // once there's a real viewport/position -- cursorSvg.hidden doesn't
+    // reliably suppress rendering for an SVG element, so keeping it out of
+    // the DOM entirely pre-search (as before this function existed) avoids
+    // showing a stray circle at its default (0,0) position.
+    mapSvg.appendChild(cursorSvg);
+  }
+}
+
+// § Braille labels — draws each active zone as an empty bordered region
+// (see svgMapRect/mapGridBounds for the geometry). Label *content* is
+// Phase 4; these render as placeholders reserving the space per spec.
+function drawLabelZoneRects(svgNs) {
+  const leftW = labelZones.left ? LABEL_ZONE_DOT_COLS * SVG_UNITS_PER_DOT : 0;
+  const rightW = labelZones.right ? LABEL_ZONE_DOT_COLS * SVG_UNITS_PER_DOT : 0;
+  const topH = labelZones.top ? LABEL_ZONE_DOT_ROWS * SVG_UNITS_PER_DOT : 0;
+  const bottomH = labelZones.bottom ? LABEL_ZONE_DOT_ROWS * SVG_UNITS_PER_DOT : 0;
+
+  const addRect = (x, y, width, height) => {
+    const rect = document.createElementNS(svgNs, 'rect');
+    rect.setAttribute('x', x.toFixed(1));
+    rect.setAttribute('y', y.toFixed(1));
+    rect.setAttribute('width', width.toFixed(1));
+    rect.setAttribute('height', height.toFixed(1));
+    rect.setAttribute('class', 'label-zone');
+    mapSvg.appendChild(rect);
+  };
+
+  // Left/right zones span the full display height; top/bottom fill the
+  // space left between them -- matches mapGridBounds' offset/width math.
+  if (labelZones.left) addRect(0, 0, leftW, SVG_HEIGHT);
+  if (labelZones.right) addRect(SVG_WIDTH - rightW, 0, rightW, SVG_HEIGHT);
+  if (labelZones.top) addRect(leftW, 0, SVG_WIDTH - leftW - rightW, topH);
+  if (labelZones.bottom) addRect(leftW, SVG_HEIGHT - bottomH, SVG_WIDTH - leftW - rightW, bottomH);
+}
+
+function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   for (const way of ways) {
     if (!way.geometry || way.geometry.length < 2) continue;
     const points = way.geometry
@@ -514,9 +650,6 @@ function renderMap(bbox, ways, anchorLat, anchorLon) {
   marker.setAttribute('r', 4);
   marker.setAttribute('class', 'anchor-poi');
   mapSvg.appendChild(marker);
-
-  // Cursor is a single reused element, always drawn last (on top).
-  mapSvg.appendChild(cursorSvg);
 }
 
 // Centers the on-screen cursor circle on the current grid cell. Position is
@@ -528,8 +661,9 @@ function updateCursorVisual() {
   const viewportBbox = getViewportBbox();
   const grid = cursorGridPosition(viewportBbox);
   if (!grid) return;
-  const cx = clamp((grid.x + 0.5) * SVG_UNITS_PER_DOT, CURSOR_SVG_RADIUS, SVG_WIDTH - CURSOR_SVG_RADIUS);
-  const cy = clamp((grid.y + 0.5) * SVG_UNITS_PER_DOT, CURSOR_SVG_RADIUS, SVG_HEIGHT - CURSOR_SVG_RADIUS);
+  const rect = svgMapRect();
+  const cx = clamp(rect.x + (grid.x + 0.5) * SVG_UNITS_PER_DOT, rect.x + CURSOR_SVG_RADIUS, rect.x + rect.width - CURSOR_SVG_RADIUS);
+  const cy = clamp(rect.y + (grid.y + 0.5) * SVG_UNITS_PER_DOT, rect.y + CURSOR_SVG_RADIUS, rect.y + rect.height - CURSOR_SVG_RADIUS);
   cursorSvg.setAttribute('cx', cx.toFixed(1));
   cursorSvg.setAttribute('cy', cy.toFixed(1));
 }
@@ -575,8 +709,9 @@ function moveCursor(dx, dy) {
   const viewportBbox = getViewportBbox();
   const current = cursorGridPosition(viewportBbox);
   if (!current) return;
-  const newGridX = clamp(current.x + dx, 0, DOT_GRID_WIDTH - 1);
-  const newGridY = clamp(current.y + dy, 0, DOT_GRID_HEIGHT - 1);
+  const b = mapGridBounds();
+  const newGridX = clamp(current.x + dx, 0, b.width - 1);
+  const newGridY = clamp(current.y + dy, 0, b.height - 1);
 
   // § Cursor and hit testing — hitting the edge of the viewport pans
   // instead of stopping there, inheriting normal Pan Behavior as-is
@@ -661,6 +796,17 @@ function changeScale(delta) {
 
 document.addEventListener('keydown', (event) => {
   if (document.activeElement === locationInput) return;
+
+  // § Command / hotkey mapping — label zone toggles work regardless of
+  // whether a map is loaded or the Braille Labels dialog is open (the
+  // dialog's checkboxes and these hotkeys drive one shared piece of state).
+  const labelZoneKeys = { i: 'top', k: 'bottom', j: 'left', l: 'right' };
+  if (labelZoneKeys[event.key]) {
+    event.preventDefault();
+    toggleLabelZone(labelZoneKeys[event.key]);
+    return;
+  }
+
   if (!lastBbox) return;
 
   // § Command / hotkey mapping — [ increases scale (zoom out), ] decreases
@@ -811,11 +957,22 @@ function packPixelsToHex(pixels, displayW, displayH, numRows) {
 // (Phase 2) — same raw, unfiltered data as the on-screen render.
 function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displayH, cursor) {
   const pixels = new Uint8Array(displayW * displayH);
+  // § Braille labels — project into the device-pixel sub-rect matching
+  // mapGridBounds (scaled from dot units to this device's own reported
+  // resolution, same as the cursor scaling below), leaving any active
+  // label zone's pixels untouched/blank rather than drawing streets there.
+  const b = mapGridBounds();
+  const scaleX = displayW / DOT_GRID_WIDTH;
+  const scaleY = displayH / DOT_GRID_HEIGHT;
+  const rectX = b.offsetX * scaleX;
+  const rectY = b.offsetY * scaleY;
+  const rectW = b.width * scaleX;
+  const rectH = b.height * scaleY;
   // -0.5 matches DotSVG's pixX/pixY: canvas/logical coordinates address the
   // *center* of a display pixel, not its corner (see rasterizeShapes).
   const project = (lat, lon) => ({
-    x: ((lon - bbox.west) / (bbox.east - bbox.west)) * displayW - 0.5,
-    y: ((bbox.north - lat) / (bbox.north - bbox.south)) * displayH - 0.5
+    x: rectX + ((lon - bbox.west) / (bbox.east - bbox.west)) * rectW - 0.5,
+    y: rectY + ((bbox.north - lat) / (bbox.north - bbox.south)) * rectH - 0.5
   });
 
   for (const way of ways) {
@@ -832,14 +989,14 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
   drawFilledCircle(pixels, displayW, displayH, anchor.x, anchor.y, 1);
 
   if (cursor) {
-    // Scale from the fixed DOT_GRID_WIDTH/HEIGHT cursor space into this
-    // device's own reported dimensions (equal in practice, per the
-    // on-connect device-info diagnostic, but kept independent).
-    // Clamped so the full 8-dot ring (offsets -1..+2, see drawCursorPixels)
-    // always fits on the grid rather than getting dots silently dropped by
-    // setGridPixel's own bounds check at the extreme edge.
-    const cx = clamp(cursor.x * (displayW / DOT_GRID_WIDTH), 1, displayW - 3);
-    const cy = clamp(cursor.y * (displayH / DOT_GRID_HEIGHT), 1, displayH - 3);
+    // cursor.x/y are map-relative grid units (see cursorGridPosition), so
+    // scale the same way as street projection above, then offset into the
+    // device-pixel sub-rect. Clamped so the full 8-dot ring (offsets -1..+2,
+    // see drawCursorPixels) always fits within the map region rather than
+    // getting dots silently dropped by setGridPixel's own bounds check, or
+    // spilling into an adjacent label zone.
+    const cx = clamp(rectX + cursor.x * scaleX, rectX + 1, rectX + rectW - 3);
+    const cy = clamp(rectY + cursor.y * scaleY, rectY + 1, rectY + rectH - 3);
     drawCursorPixels(pixels, displayW, displayH, cx, cy);
   }
 
