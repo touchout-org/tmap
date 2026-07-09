@@ -246,14 +246,11 @@ function textToMessageHex(text, numCells) {
   return hex;
 }
 
-// Hardcoded to the spec's documented 20-cell message display rather than
-// trusting device.numberBrailleCellColumns — diagnostic step to rule out the
-// device misreporting a larger cell count and being sent more data than its
-// message line can actually hold.
-const MESSAGE_LINE_CELLS = 20;
-
 function sendTextToDevice(text, device) {
-  const numCells = MESSAGE_LINE_CELLS;
+  // Confirmed via on-screen device-info diagnostic that this hardware
+  // reports numberBrailleCellColumns=20, matching the spec, so back to
+  // trusting the device's own reported value rather than hardcoding it.
+  const numCells = device.numberBrailleCellColumns;
   const zeros = '00'.repeat(numCells);
   const hex = textToMessageHex(text, numCells);
   sdk.displayTextData(zeros, device, DisplayMode.TextMode);
@@ -307,7 +304,13 @@ function packPixelsToHex(pixels, displayW, displayH, numRows) {
       }
     }
   }
-  return Array.from(nibbles, (n) => n.toString(16).padStart(2, '0').toUpperCase()).join('');
+  // No padStart here: each entry is a true 4-bit nibble (bit ranges 0-3, so
+  // the max value is 0b1111 = 0xF) and needs exactly one hex character, not
+  // two. Padding to 2 chars (as the message-line byte encoding correctly
+  // does) silently doubles the string length and shifts every nibble after
+  // the first non-trivial one out of alignment -- this was the actual bug
+  // behind the deformed grid, not any timing/delay issue.
+  return Array.from(nibbles, (n) => n.toString(16).toUpperCase()).join('');
 }
 
 // Reprojects lon/lat directly to the device's native dot-grid resolution
@@ -398,20 +401,16 @@ function setConnectedState(device) {
     `Device: numberCellColumns=${device.numberCellColumns}, ` +
     `numberCellRows=${device.numberCellRows}, ` +
     `numberBrailleCellColumns=${device.numberBrailleCellColumns}`;
-  // Diagnostic: dimensions confirmed correct (30x10) and the message-only
-  // delay didn't fix the deformed grid, so now test the broader theory --
-  // wait 1s after connecting before writing anything at all to the device,
-  // message or graphic, in case writing immediately after BLE connect
-  // establishes puts the device into a bad state.
-  setTimeout(() => {
-    if (lastBbox) {
-      setMessage('Dot Pad connected.');
-      sendGraphicToDevice(device);
-    } else {
-      setMessage('Dot Pad connected. Showing 6x4 test grid.');
-      sendTestGridToDevice(device);
-    }
-  }, 1000);
+  // Renders immediately on connect, no delay -- matches DotSVG. The earlier
+  // timing delays were diagnostic and didn't help; the real bug was the
+  // packPixelsToHex padding issue above.
+  if (lastBbox) {
+    setMessage('Dot Pad connected.');
+    sendGraphicToDevice(device);
+  } else {
+    setMessage('Dot Pad connected. Showing 6x4 test grid.');
+    sendTestGridToDevice(device);
+  }
 }
 
 function setDisconnectedState() {
