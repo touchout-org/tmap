@@ -28,6 +28,8 @@ Any Nominatim/Overpass error (network failure, rate-limiting, no results, etc.) 
 
 The message field (the on-screen print version of the message display, an ARIA live region) is the single source of truth for anything announced to the user — not the Dot Pad's 20-cell message display or speech output. Whenever something needs to be reported (pan status, scale changes, current-object names under the cursor, label toggle state, etc.), the app updates the message field first; that update then pushes to the Dot Pad message display and separately triggers the ARIA live announcement. The Dot Pad display and speech are downstream reflections of the message field, never independently-driven outputs.
 
+Messages are kept terse by convention (e.g., a found address is truncated to the display's 20 cells at a word boundary, never mid-word) since there's currently no way to see more than what fits in those 20 cells at once. A command for panning the message display to reveal the rest of a longer message is a plausible future addition — not designed yet, flagged here so the terse-message convention isn't mistaken for a hard length limit on what the app can ever report.
+
 ## Screen Layout
 
 The default title is "DotTMAP — Tactile Street Maps for the Dot Pad." When a map has been loaded or created, the title of the current street map replaces the part of the title following the em dash (e.g., "DotTMAP — 123 Main Street, Springfield").

@@ -63,11 +63,27 @@ if (!isChrome()) {
 
 // § Message display architecture — the on-screen field is the single source of
 // truth; it updates first, then pushes to the Dot Pad's 20-cell message display.
-function setMessage(text) {
+// Messages are kept terse throughout: the device only has 20 cells to show
+// them in, and there's no way to pan to see the rest of a longer message yet.
+function setMessage(text, deviceDelayMs = 0) {
   messageDisplay.textContent = text;
   if (currentDevice) {
-    sendTextToDevice(text, currentDevice);
+    if (deviceDelayMs > 0) {
+      setTimeout(() => sendTextToDevice(text, currentDevice), deviceDelayMs);
+    } else {
+      sendTextToDevice(text, currentDevice);
+    }
   }
+}
+
+// Truncates to at most maxLen characters, but backs off to the last space
+// rather than cutting a word in half -- e.g. "2632 College Ave, Berkeley"
+// becomes "2632 College Ave," (18 chars), not "2632 College Ave, Be".
+function truncateMessage(text, maxLen = 20) {
+  if (text.length <= maxLen) return text;
+  const cut = text.slice(0, maxLen);
+  const lastSpace = cut.lastIndexOf(' ');
+  return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
 }
 
 searchForm.addEventListener('submit', (event) => {
@@ -79,16 +95,16 @@ searchForm.addEventListener('submit', (event) => {
 });
 
 async function runSearch(query) {
-  setMessage(`Searching for "${query}"…`);
+  setMessage('Searching…');
   let place;
   try {
     place = await geocode(query);
   } catch (err) {
-    setMessage(`Could not reach Nominatim to search for "${query}". Check your connection and try again.`);
+    setMessage('Search failed');
     return;
   }
   if (!place) {
-    setMessage(`No results found for "${query}".`);
+    setMessage('No results');
     return;
   }
 
@@ -100,7 +116,7 @@ async function runSearch(query) {
   try {
     ways = await fetchWays(bbox);
   } catch (err) {
-    setMessage(`Found "${formatPlaceName(place)}", but could not reach Overpass to fetch street data. Check your connection and try again.`);
+    setMessage('Streets failed');
     return;
   }
 
@@ -184,8 +200,7 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
     sendGraphicToDevice(currentDevice);
   }
 
-  const streetCount = new Set(ways.map((w) => w.tags && w.tags.name).filter(Boolean)).size;
-  setMessage(`Showing ${displayName}. ${streetCount} named street${streetCount === 1 ? '' : 's'} in view.`);
+  setMessage(truncateMessage(displayName));
 }
 
 function renderMap(bbox, ways, anchorLat, anchorLon) {
@@ -401,14 +416,15 @@ function setConnectedState(device) {
     `Device: numberCellColumns=${device.numberCellColumns}, ` +
     `numberCellRows=${device.numberCellRows}, ` +
     `numberBrailleCellColumns=${device.numberBrailleCellColumns}`;
-  // Renders immediately on connect, no delay -- matches DotSVG. The earlier
-  // timing delays were diagnostic and didn't help; the real bug was the
-  // packPixelsToHex padding issue above.
+  // Graphic renders immediately (matches DotSVG); the message-line write is
+  // delayed 1s -- confirmed by testing this avoids a ~15s hold-up before the
+  // graphic write completes, so it stays even though the actual deformed-grid
+  // bug (packPixelsToHex padding above) is now fixed for other reasons.
   if (lastBbox) {
-    setMessage('Dot Pad connected.');
+    setMessage('Connected', 1000);
     sendGraphicToDevice(device);
   } else {
-    setMessage('Dot Pad connected. Showing 6x4 test grid.');
+    setMessage('Connected: grid', 1000);
     sendTestGridToDevice(device);
   }
 }
@@ -418,27 +434,27 @@ function setDisconnectedState() {
   btnConnect.hidden = false;
   btnDisconnect.hidden = true;
   deviceInfo.textContent = '';
-  setMessage('Dot Pad disconnected.');
+  setMessage('Disconnected');
 }
 
 btnConnect.addEventListener('click', async () => {
   btnConnect.disabled = true;
-  setMessage('Scanning for Dot Pad…');
+  setMessage('Scanning…');
   try {
     const bleDevice = await scanner.startBleScan();
     if (!bleDevice) {
-      setMessage('No Dot Pad selected.');
+      setMessage('No device selected');
       btnConnect.disabled = false;
       return;
     }
-    setMessage('Connecting to Dot Pad…');
+    setMessage('Connecting…');
     const dotDevice = await sdk.connectBleDevice(bleDevice);
     if (!dotDevice) {
-      setMessage('Could not connect to the Dot Pad.');
+      setMessage('Connect failed');
       btnConnect.disabled = false;
     }
   } catch (err) {
-    setMessage(`Dot Pad connection error: ${err.message}`);
+    setMessage('Connect error');
     btnConnect.disabled = false;
   }
 });
@@ -457,7 +473,7 @@ sdk.setCallBack(
     } else if (dataCode === DataCodes.Disconnected) {
       setDisconnectedState();
     } else if (dataCode === DataCodes.ConnectedFail) {
-      setMessage('Dot Pad connection failed.');
+      setMessage('Connect failed');
     }
   },
   () => {}
