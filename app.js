@@ -628,7 +628,29 @@ function drawLabelZoneRects(svgNs) {
   if (labelZones.bottom) addRect(leftW, SVG_HEIGHT - bottomH, SVG_WIDTH - leftW - rightW, bottomH);
 }
 
+// § Braille labels — streets/anchor go in a group clipped to the map's
+// sub-rect (see svgMapRect), not just the full 600x400 canvas. Way geometry
+// routinely extends well beyond the current viewport (lastBbox is the whole
+// fetched square; bbox here is just the visible window within it), so
+// without this a polyline can run straight through a reserved label zone on
+// its way to an off-screen point -- previously only hidden from view by the
+// zone rect's own fill/z-order, not actually excluded.
 function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
+  const rect = svgMapRect();
+  const clipPath = document.createElementNS(svgNs, 'clipPath');
+  clipPath.setAttribute('id', 'map-clip');
+  const clipRect = document.createElementNS(svgNs, 'rect');
+  clipRect.setAttribute('x', rect.x.toFixed(1));
+  clipRect.setAttribute('y', rect.y.toFixed(1));
+  clipRect.setAttribute('width', rect.width.toFixed(1));
+  clipRect.setAttribute('height', rect.height.toFixed(1));
+  clipPath.appendChild(clipRect);
+  mapSvg.appendChild(clipPath);
+
+  const group = document.createElementNS(svgNs, 'g');
+  group.setAttribute('clip-path', 'url(#map-clip)');
+  mapSvg.appendChild(group);
+
   for (const way of ways) {
     if (!way.geometry || way.geometry.length < 2) continue;
     const points = way.geometry
@@ -640,7 +662,7 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
     const line = document.createElementNS(svgNs, 'polyline');
     line.setAttribute('points', points);
     line.setAttribute('class', 'street');
-    mapSvg.appendChild(line);
+    group.appendChild(line);
   }
 
   const anchorPoint = projectToSvg(anchorLat, anchorLon, bbox);
@@ -649,7 +671,7 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   marker.setAttribute('cy', anchorPoint.y.toFixed(1));
   marker.setAttribute('r', 4);
   marker.setAttribute('class', 'anchor-poi');
-  mapSvg.appendChild(marker);
+  group.appendChild(marker);
 }
 
 // Centers the on-screen cursor circle on the current grid cell. Position is
@@ -902,6 +924,40 @@ function drawLinePixels(pixels, w, h, x0, y0, x1, y1) {
   }
 }
 
+// § Braille labels — Liang-Barsky segment-vs-rectangle clip. Needed because
+// way geometry routinely extends well beyond the current viewport (see
+// rasterizeMapToPixels), so a raw Bresenham draw would run straight through
+// a reserved label zone on its way to an off-screen endpoint. Returns null
+// if the segment doesn't intersect the rect at all.
+function clipSegmentToRect(x0, y0, x1, y1, minX, minY, maxX, maxY) {
+  let t0 = 0, t1 = 1;
+  const dx = x1 - x0, dy = y1 - y0;
+  const edges = [
+    [-dx, x0 - minX],
+    [dx, maxX - x0],
+    [-dy, y0 - minY],
+    [dy, maxY - y0]
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return null;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return null;
+      if (r < t1) t1 = r;
+    }
+  }
+  return {
+    x0: x0 + t0 * dx, y0: y0 + t0 * dy,
+    x1: x0 + t1 * dx, y1: y0 + t1 * dy
+  };
+}
+
 function drawFilledCircle(pixels, w, h, cx, cy, r) {
   cx = Math.round(cx); cy = Math.round(cy);
   for (let dy = -r; dy <= r; dy++) {
@@ -959,8 +1015,10 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
   const pixels = new Uint8Array(displayW * displayH);
   // § Braille labels — project into the device-pixel sub-rect matching
   // mapGridBounds (scaled from dot units to this device's own reported
-  // resolution, same as the cursor scaling below), leaving any active
-  // label zone's pixels untouched/blank rather than drawing streets there.
+  // resolution, same as the cursor scaling below). Segments are clipped to
+  // this rect below (see clipSegmentToRect) so a reserved zone actually
+  // stays blank, rather than just being where in-bounds points happen to
+  // land.
   const b = mapGridBounds();
   const scaleX = displayW / DOT_GRID_WIDTH;
   const scaleY = displayH / DOT_GRID_HEIGHT;
@@ -975,18 +1033,31 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
     y: rectY + ((bbox.north - lat) / (bbox.north - bbox.south)) * rectH - 0.5
   });
 
+  // § Braille labels — way geometry commonly extends well beyond the
+  // current viewport (lastBbox is the whole fetched square; bbox here is
+  // just the visible window within it), so each segment is clipped to the
+  // map rect before drawing rather than relying on setGridPixel's full-
+  // canvas bounds check, which would otherwise let a line run straight
+  // through a reserved zone on its way to an off-screen endpoint.
+  const rectMaxX = rectX + rectW;
+  const rectMaxY = rectY + rectH;
   for (const way of ways) {
     if (!way.geometry || way.geometry.length < 2) continue;
     let prev = null;
     for (const pt of way.geometry) {
       const p = project(pt.lat, pt.lon);
-      if (prev) drawLinePixels(pixels, displayW, displayH, prev.x, prev.y, p.x, p.y);
+      if (prev) {
+        const clipped = clipSegmentToRect(prev.x, prev.y, p.x, p.y, rectX, rectY, rectMaxX, rectMaxY);
+        if (clipped) drawLinePixels(pixels, displayW, displayH, clipped.x0, clipped.y0, clipped.x1, clipped.y1);
+      }
       prev = p;
     }
   }
 
   const anchor = project(anchorLat, anchorLon);
-  drawFilledCircle(pixels, displayW, displayH, anchor.x, anchor.y, 1);
+  if (anchor.x >= rectX && anchor.x <= rectMaxX && anchor.y >= rectY && anchor.y <= rectMaxY) {
+    drawFilledCircle(pixels, displayW, displayH, anchor.x, anchor.y, 1);
+  }
 
   if (cursor) {
     // cursor.x/y are map-relative grid units (see cursorGridPosition), so
