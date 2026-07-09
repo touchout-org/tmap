@@ -12,7 +12,13 @@ const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 // Settings-ready variables (see tmap spec.md § Settings) — not yet exposed in a UI,
 // but kept as named constants rather than inlined so the Settings dialog has a real
 // value to bind to later.
-const POI_DISTANCE_THRESHOLD_MILES = 1;
+//
+// Temporarily set well below the spec's [1 mile] default: with no decluttering
+// (Phase 2) or scale control (Phase 1 item 6) built yet, 1 mile crammed into the
+// 60x40 dot grid is too dense to read by touch. 0.15 miles (~three or four short
+// blocks) is small enough to verify individual streets render in the right place.
+// Revert to the real default once Scale / decluttering land.
+const POI_DISTANCE_THRESHOLD_MILES = 0.15;
 
 // Matches DotSVG's 600x400 canvas (10:1 over the 60x40 dot grid) — see tmap spec.md
 // § SVG Display Requirements (3x2 canvas ratio).
