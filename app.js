@@ -1091,8 +1091,10 @@ function reprocessWays() {
 
 // Projects into the map's sub-rectangle of the SVG canvas (see svgMapRect),
 // not the full 600x400 canvas -- active label zones shrink and offset it.
-function projectToSvg(lat, lon, bbox) {
-  const rect = svgMapRect();
+// rect defaults to the map's current (possibly label-zone-shrunk) drawable
+// area, per svgMapRect() -- overridden by computeMaxCellDensity, which needs
+// a rect that doesn't move with the label zones (see that function).
+function projectToSvg(lat, lon, bbox, rect = svgMapRect()) {
   const x = rect.x + ((lon - bbox.west) / (bbox.east - bbox.west)) * rect.width;
   const y = rect.y + ((bbox.north - lat) / (bbox.north - bbox.south)) * rect.height;
   return { x, y };
@@ -1393,13 +1395,23 @@ function computeVisibleMaxTier(viewportBbox, ways) {
   return 1;
 }
 
-// Grid overlay sized by tuningDensityCellSizePx over the map's current
-// on-screen sub-rect; counts distinct street *names* per cell (not raw way
-// segments, since one named street is often split into many ways at
-// intersections and would otherwise overstate its own density) and returns
-// the busiest cell's count.
+// Grid overlay sized by tuningDensityCellSizePx over the FULL canvas -- not
+// svgMapRect(), which shrinks whenever a label zone is active. Using the
+// zone-shrunk rect here made toggling any label zone squeeze the same
+// streets into a smaller measured area, spuriously raising the reading and
+// escalating the tier cutoff for the *whole* map (e.g. a street on the
+// opposite edge from the zone losing tier 4 entirely, not just gaining a
+// clipped top) -- reported 2026-07-10 against 2318 Fillmore St, SF at 1in =
+// 1500ft. Density must only track actual street crowding, independent of
+// how much of the canvas is currently reserved for labels; the shrunk rect
+// is still exactly right for *rendering* (see renderStreetsAndAnchor) and
+// for the tactile raster, just not for this measurement.
+//
+// Counts distinct street *names* per cell (not raw way segments, since one
+// named street is often split into many ways at intersections and would
+// otherwise overstate its own density) and returns the busiest cell's count.
 function computeMaxCellDensity(viewportBbox, ways) {
-  const rect = svgMapRect();
+  const rect = { x: 0, y: 0, width: SVG_WIDTH, height: SVG_HEIGHT };
   const cellSize = tuningDensityCellSizePx;
   const cols = Math.max(1, Math.ceil(rect.width / cellSize));
   const rows = Math.max(1, Math.ceil(rect.height / cellSize));
@@ -1410,7 +1422,7 @@ function computeMaxCellDensity(viewportBbox, ways) {
     if (!name || !way.geometry || way.geometry.length < 2) continue;
     let prev = null;
     for (const pt of way.geometry) {
-      const p = projectToSvg(pt.lat, pt.lon, viewportBbox);
+      const p = projectToSvg(pt.lat, pt.lon, viewportBbox, rect);
       if (prev) markCellsAlongLine(prev, p, rect, cellSize, cols, rows, cellNames, name);
       prev = p;
     }
