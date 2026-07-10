@@ -96,6 +96,8 @@ The `i`/`j`/`k`/`l` hotkeys and the Braille Labels dialog's four checkboxes driv
 
 The cursor is a small unfilled circle (a 4x4 square with the corners missing). It can be moved with the arrow keys on the keyboard, or with dots 3, 2, 5, and 6 on the device (corresponding to left, up, down, and right respectively). This is the same interaction pattern already implemented and used across the DotSVG repo (another touchout.org project) for Dot Pad hardware interaction, and will be reused here rather than reinvented. The cursor moves one display pixel per key press.
 
+If the cursor is at the edge of the current view, moving it further in that direction pans the map instead of stopping — including "Edge of Map" if the fetched data's own boundary is reached.
+
 Any object that intersects with the edge of the circle is considered "current." If more than one object intersects the edge, there is more than one current object. Current objects are identified by name.
 
 Current object names are displayed in the message field and on the message display.
@@ -199,6 +201,10 @@ Streets are never removed from the underlying map data at any scale, only from t
 Using pan controls (see [command mapping](#command--hotkey-mapping)), the display moves in the specified direction by the amount specified in Pan Amount (settings). The tactile display updates and the on-screen Pan Status announces "[distance] [direction] of [anchor POI]," following the [message display architecture](#message-display-architecture) (message field updates first, then pushes to the Dot Pad and triggers speech).
 
 If a pan would move the view past the edge of the fetched data — the square region bounded by the POI distance threshold from the anchor POI, see [Data sources](#data-sources) — the pan is rejected: a tone plays (see [Sound cues](#sound-cues) — this comes from the computer's speakers, not the Dot Pad itself, which has no exposed beep/vibrate capability) and the message display reports "Edge of Map."
+
+If changing scale would leave the cursor outside the new view, the view shifts to keep the cursor visible, bounded by the edge of the fetched data. If the data doesn't allow enough room, the cursor's on-screen position is clamped to the edge instead.
+
+If a pan would leave the cursor outside the view on the edge opposite the pan direction, the cursor moves with the pan by the same amount, keeping its position relative to the view unchanged.
 
 ## POIs
 

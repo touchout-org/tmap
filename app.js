@@ -1236,6 +1236,42 @@ function moveCursor(dx, dy) {
   }
 }
 
+// § Pan Behavior — an explicit pan carries the cursor's fixed real-world
+// position along with it if (and only if) the pan would otherwise push that
+// position past the edge OPPOSITE the pan direction (the "trailing" edge).
+// Without this, keepCursorInView (called from refreshMap right after) would
+// see the cursor fall outside the new viewport and silently shift the
+// viewport back toward it -- fighting the pan the user just asked for, with
+// no Edge of Map message since panMap's own edge check already passed. From
+// the user's perspective, repeated presses in the same direction just stop
+// doing anything once the cursor is close enough to the trailing edge.
+//
+// This deliberately only fires for the trailing edge: a cursor pinned at
+// the LEADING edge (e.g. from moveCursor's own edge-triggered pan) is left
+// untouched, since that's the existing, correct behavior -- the cursor
+// naturally ends up further from that edge as the viewport moves under it.
+// Shifting by exactly latStep/lonStep (the same amount the viewport itself
+// just moved) restores the cursor to the same position relative to the new
+// viewport that it had relative to the old one, which was already safely
+// in view -- so keepCursorInView finds nothing left to correct.
+function carryCursorPastTrailingEdge(direction, latStep, lonStep) {
+  if (cursorLat === null) return;
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return;
+  const b = mapGridBounds();
+  const p = projectToGrid(cursorLat, cursorLon, viewportBbox);
+
+  if (direction === 'south' && p.y < 0) {
+    cursorLat -= latStep;
+  } else if (direction === 'north' && p.y > b.height - 1) {
+    cursorLat += latStep;
+  } else if (direction === 'east' && p.x < 0) {
+    cursorLon += lonStep;
+  } else if (direction === 'west' && p.x > b.width - 1) {
+    cursorLon -= lonStep;
+  }
+}
+
 // § Pan Behavior — moves the viewport by PAN_AMOUNT_FRACTION of its current
 // width/height. Rejected (viewport unchanged) if the move would push the
 // viewport past the edge of the fetched data; the message field reports
@@ -1271,6 +1307,7 @@ function panMap(direction) {
 
   viewportCenterLat = newLat;
   viewportCenterLon = newLon;
+  carryCursorPastTrailingEdge(direction, latStep, lonStep);
   refreshMap();
 
   const { eastFt, northFt } = feetOffsetFrom(viewportCenterLat, viewportCenterLon, lastAnchorLat, lastAnchorLon);
