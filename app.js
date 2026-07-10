@@ -87,17 +87,18 @@ const HIGHWAY_TIERS = {
 };
 const MAX_TIER = 7;
 
-// § Experimental tuning fields (early development only) — no defaults yet
-// per spec; each stays unset until the user enters a value in the dev-only
-// tuning surface. Carriageway collapse and tier-based decluttering are both
-// no-ops (show/keep everything) while their parameter is unset.
-let tuningCarriagewayMaxSeparationFt = null;
-let tuningDensityCellSizePx = null;
-let tuningDensityThreshold = null;
+// § Experimental tuning fields (early development only) — empirically-
+// chosen defaults from testing against real Berkeley OSM data, matching the
+// values pre-filled in the tuning inputs (see index.html). Carriageway
+// collapse and tier-based decluttering are no-ops (show/keep everything)
+// only if a field is cleared back to blank.
+let tuningCarriagewayMaxSeparationFt = 200;
+let tuningDensityCellSizePx = 20;
+let tuningDensityThreshold = 2;
 
 // Number of evenly-spaced points used to resample each way in a matched
-// carriageway pair before averaging into a centerline (see
-// collapseToCenterline) — arbitrary but plenty for street-scale geometry.
+// carriageway cluster before averaging into a centerline (see
+// collapseClusterWindowed) — arbitrary but plenty for street-scale geometry.
 const CARRIAGEWAY_RESAMPLE_POINTS = 12;
 
 // A street "hits" the cursor when it passes within this many grid units of
@@ -110,6 +111,7 @@ const browserWarning = document.getElementById('browser-warning');
 const searchForm = document.getElementById('search-form');
 const locationLabel = document.getElementById('location-label');
 const locationInput = document.getElementById('location-input');
+const btnSearch = document.getElementById('btn-search');
 const anchorHeading = document.getElementById('anchor-heading');
 const mapSvg = document.getElementById('map');
 const messageDisplay = document.getElementById('message-display');
@@ -224,6 +226,16 @@ function setMessage(text, deviceDelayMs = 0) {
   // Full text always goes on-screen (and so is what speech/ARIA announces).
   // Only the device copy is truncated, since that's the only channel with
   // an actual 20-cell physical limit.
+  //
+  // § Message display architecture — the live region is cleared and forced
+  // to reflow before being repopulated. Screen readers (confirmed on NVDA)
+  // don't reliably treat a same-element textContent change as a fresh
+  // assertive announcement that interrupts whatever's still being spoken;
+  // clear-then-reflow-then-set is the standard technique for forcing that,
+  // rather than letting rapid successive messages queue up and play in
+  // full one after another.
+  messageDisplay.textContent = '';
+  void messageDisplay.offsetHeight;
   messageDisplay.textContent = text;
   if (currentDevice) {
     const deviceText = truncateMessage(text, currentDevice.numberBrailleCellColumns);
@@ -283,11 +295,22 @@ SCALE_PRESETS_FT.forEach((_, index) => {
 });
 scaleSelect.value = String(DEFAULT_SCALE_INDEX);
 
-scaleSelect.addEventListener('change', () => {
-  const newIndex = Number(scaleSelect.value);
+// § Scale behavior — shared by the on-screen combo box and the changeScale
+// hotkey helper below, so a mouse-driven scale change goes through the exact
+// same update (message + refresh) as a keyboard/Dot Pad one, not a separate
+// copy of the same logic.
+function setScaleIndex(newIndex) {
+  if (!lastBbox) return;
+  newIndex = clamp(newIndex, 0, SCALE_PRESETS_FT.length - 1);
+  if (newIndex === scaleIndex) return;
   scaleIndex = newIndex;
+  scaleSelect.value = String(scaleIndex);
   refreshMap();
   setMessage(formatScaleLabel(scaleIndex));
+}
+
+scaleSelect.addEventListener('change', () => {
+  setScaleIndex(Number(scaleSelect.value));
 });
 
 btnPanNorth.addEventListener('click', () => panMap('north'));
@@ -351,6 +374,10 @@ tuningCarriagewayMaxSeparationInput.addEventListener('change', () => {
 
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
+  // Move focus off the text field and onto Search on every submit
+  // (including pressing Enter in the field) rather than leaving it in the
+  // edit field, where a screen reader user could accidentally retype into it.
+  btnSearch.focus();
   const query = locationInput.value.trim();
   if (query) {
     runSearch(query);
@@ -496,34 +523,37 @@ async function fetchWays(bbox) {
 // carriageway pairs, Roadway/pedestrian dedup, Collapse to centerline,
 // Assign tier). Runs on every fetch and again whenever a tuning field
 // changes (see reprocessWays), since a different carriageway max-separation
-// changes which pairs collapse.
+// changes which clusters collapse.
+//
+// Carriageway collapse is N-way, not just pairwise -- a divided road with
+// 3+ same-name, same-tier ways sharing a stretch of corridor (not just the
+// standard 2-way oneway pair) collapses to one centerline. Tier is assigned
+// right after dedup (rather than at the very end) specifically so clustering
+// only ever groups ways of identical importance -- a two-way collapse must
+// never accidentally average a road with a same-named service driveway.
 function processWays(rawWays) {
-  const groups = groupWaysByName(rawWays);
+  const nameGroups = groupWaysByName(rawWays);
   const cleaned = [];
 
-  for (const ways of groups.values()) {
-    const pairs = detectCarriagewayPairs(ways);
-    // Dedup runs across the whole name group before collapse, per spec
-    // pipeline order -- in the rare case it drops one member of a detected
-    // pair, that pair just doesn't collapse; its survivor passes through
-    // untouched below like any other unpaired way.
-    const survivors = new Set(dedupRoadwayPedestrian(ways));
-    const collapsedMembers = new Set();
+  for (const ways of nameGroups.values()) {
+    // Dedup runs across the whole name group first, per spec pipeline order.
+    const survivors = dedupRoadwayPedestrian(ways);
+    for (const way of survivors) {
+      way.tier = HIGHWAY_TIERS[way.tags && way.tags.highway] || MAX_TIER;
+    }
 
-    for (const [a, b] of pairs) {
-      if (survivors.has(a) && survivors.has(b)) {
-        cleaned.push(collapseToCenterline(a, b));
-        collapsedMembers.add(a);
-        collapsedMembers.add(b);
+    const tierGroups = groupByTier(survivors);
+    for (const tierWays of tierGroups.values()) {
+      const clusters = detectCarriagewayClusters(tierWays, tuningCarriagewayMaxSeparationFt);
+      for (const cluster of clusters) {
+        if (cluster.length === 1) {
+          cleaned.push(cluster[0]);
+        } else {
+          const { collapsed, remainders } = collapseClusterWindowed(cluster);
+          cleaned.push(collapsed, ...remainders);
+        }
       }
     }
-    for (const way of survivors) {
-      if (!collapsedMembers.has(way)) cleaned.push(way);
-    }
-  }
-
-  for (const way of cleaned) {
-    way.tier = HIGHWAY_TIERS[way.tags && way.tags.highway] || MAX_TIER;
   }
   return cleaned;
 }
@@ -539,6 +569,15 @@ function groupWaysByName(ways) {
   return groups;
 }
 
+function groupByTier(ways) {
+  const groups = new Map();
+  for (const way of ways) {
+    if (!groups.has(way.tier)) groups.set(way.tier, []);
+    groups.get(way.tier).push(way);
+  }
+  return groups;
+}
+
 // § Same-name roadway/pedestrian de-duplication — footway/path/cycleway/
 // pedestrian/steps ways are dropped once at least one roadway-class way
 // shares their name (treated as a sidewalk/path running alongside the
@@ -547,63 +586,6 @@ function dedupRoadwayPedestrian(ways) {
   const hasRoadway = ways.some((w) => ROADWAY_CLASSES.has(w.tags && w.tags.highway));
   if (!hasRoadway) return ways.slice();
   return ways.filter((w) => !PEDESTRIAN_CLASSES.has(w.tags && w.tags.highway));
-}
-
-// § Divided-road carriageway collapse — candidate-pair detection, in order
-// of reliability: explicit dual_carriageway tag, then oneway+opposite-
-// bearing+max-separation+consistent-overlap. Each way is matched at most
-// once (first candidate found), consistent with simple parallel pairs
-// rather than complex multi-way interchanges (explicitly out of scope).
-function detectCarriagewayPairs(ways) {
-  const pairs = [];
-  const used = new Set();
-  for (let i = 0; i < ways.length; i++) {
-    if (used.has(ways[i])) continue;
-    for (let j = i + 1; j < ways.length; j++) {
-      if (used.has(ways[j])) continue;
-      if (isCarriagewayPair(ways[i], ways[j])) {
-        pairs.push([ways[i], ways[j]]);
-        used.add(ways[i]);
-        used.add(ways[j]);
-        break;
-      }
-    }
-  }
-  return pairs;
-}
-
-function isCarriagewayPair(a, b) {
-  if (!a.geometry || a.geometry.length < 2 || !b.geometry || b.geometry.length < 2) return false;
-
-  // 1. Explicit tag — confirmed immediately, no geometric check needed.
-  if (a.tags && a.tags.dual_carriageway === 'yes' && b.tags && b.tags.dual_carriageway === 'yes') {
-    return true;
-  }
-
-  // 2. oneway + opposite direction — the standard mapping convention absent
-  // the explicit tag.
-  const aOneway = a.tags && a.tags.oneway === 'yes';
-  const bOneway = b.tags && b.tags.oneway === 'yes';
-  if (!aOneway || !bOneway) return false;
-  if (!bearingsAreOpposite(wayBearing(a), wayBearing(b))) return false;
-
-  // 3. Maximum separation — experimentally-tuned, no pairing at all until
-  // the user sets a value in the tuning surface (see Experimental tuning
-  // fields).
-  if (tuningCarriagewayMaxSeparationFt == null) return false;
-  const distances = vertexDistancesToWayFt(a, b);
-  if (!distances.length) return false;
-  const maxDist = Math.max(...distances);
-  if (maxDist > tuningCarriagewayMaxSeparationFt) return false;
-
-  // 4. Consistent overlap — a true parallel pair stays close to its average
-  // separation along its whole run; two ways that only touch near one end
-  // and diverge (sequential blocks, or a coincidental name collision) show
-  // wide swings instead.
-  const minDist = Math.min(...distances);
-  if (maxDist - minDist > tuningCarriagewayMaxSeparationFt * 0.75) return false;
-
-  return true;
 }
 
 // Bearing in degrees (0-360, 0=north, clockwise) of the straight line from a
@@ -622,80 +604,216 @@ function bearingsAreOpposite(b1, b2, toleranceDeg = 30) {
   return diff <= toleranceDeg;
 }
 
-// Per-vertex nearest-point distance (in feet) from each point of `from` to
-// the polyline `to` -- a proxy for "perpendicular separation" without
-// needing true perpendicular-projection geometry.
-function vertexDistancesToWayFt(from, to) {
-  const distances = [];
-  for (const pt of from.geometry) {
-    let best = Infinity;
-    for (let i = 1; i < to.geometry.length; i++) {
-      const d = pointToSegmentDistanceFt(pt, to.geometry[i - 1], to.geometry[i]);
-      if (d < best) best = d;
-    }
-    if (Number.isFinite(best)) distances.push(best);
-  }
-  return distances;
-}
-
-function pointToSegmentDistanceFt(pt, segA, segB) {
-  const p = feetOffsetFrom(pt.lat, pt.lon, segA.lat, segA.lon);
-  const seg = feetOffsetFrom(segB.lat, segB.lon, segA.lat, segA.lon);
-  const lenSq = seg.eastFt * seg.eastFt + seg.northFt * seg.northFt;
-  if (lenSq === 0) return Math.hypot(p.eastFt, p.northFt);
-  let t = (p.eastFt * seg.eastFt + p.northFt * seg.northFt) / lenSq;
-  t = clamp(t, 0, 1);
-  return Math.hypot(p.eastFt - t * seg.eastFt, p.northFt - t * seg.northFt);
-}
-
-// § Divided-road carriageway collapse — resamples both ways to N evenly-
-// spaced points along arc length and averages corresponding pairs into one
-// centerline vertex. A deliberately lighter-weight substitute for the
-// Delaunay-triangulation-based approach full GIS tools use, appropriate
-// since our case is narrow (simple parallel pairs, not interchanges).
-function collapseToCenterline(a, b) {
-  const pointsA = resampleWay(a, CARRIAGEWAY_RESAMPLE_POINTS);
-  const pointsB = resampleWay(b, CARRIAGEWAY_RESAMPLE_POINTS);
-  // b commonly runs the opposite direction (antiparallel oneway pair) --
-  // reverse it so corresponding indices actually line up geographically.
-  const reversedB = bearingsAreOpposite(wayBearing(a), wayBearing(b))
-    ? pointsB.slice().reverse()
-    : pointsB;
-
-  const geometry = pointsA.map((pt, i) => ({
-    lat: (pt.lat + reversedB[i].lat) / 2,
-    lon: (pt.lon + reversedB[i].lon) / 2
-  }));
-
-  return { tags: a.tags, geometry };
-}
-
-// Resamples a way's polyline to n evenly-spaced points along its arc length
-// (cumulative straight-line distance between vertices) -- good enough at
-// street scale, no need for geodesic precision.
-function resampleWay(way, n) {
+function wayLengthFt(way) {
   const geom = way.geometry;
-  const cumulative = [0];
+  let total = 0;
   for (let i = 1; i < geom.length; i++) {
     const { eastFt, northFt } = feetOffsetFrom(geom[i].lat, geom[i].lon, geom[i - 1].lat, geom[i - 1].lon);
-    cumulative.push(cumulative[i - 1] + Math.hypot(eastFt, northFt));
+    total += Math.hypot(eastFt, northFt);
   }
-  const totalLength = cumulative[cumulative.length - 1];
+  return total;
+}
 
+// § Divided-road carriageway collapse — an axis unit vector for projecting
+// points into "distance along the corridor" terms, from a way's own bearing.
+function axisUnitVector(bearingDeg) {
+  const rad = bearingDeg * (Math.PI / 180);
+  return { dx: Math.sin(rad), dy: Math.cos(rad) };
+}
+
+function axisPosition(pt, origin, dx, dy) {
+  const { eastFt, northFt } = feetOffsetFrom(pt.lat, pt.lon, origin.lat, origin.lon);
+  return eastFt * dx + northFt * dy;
+}
+
+function wayAxisExtent(way, origin, dx, dy) {
+  let min = Infinity, max = -Infinity;
+  for (const pt of way.geometry) {
+    const p = axisPosition(pt, origin, dx, dy);
+    if (p < min) min = p;
+    if (p > max) max = p;
+  }
+  return [min, max];
+}
+
+// Finds the lat/lon on a way's polyline at a given axis position, by linear
+// interpolation between the two vertices bracketing it. Assumes the way's
+// axis-position runs roughly monotonically along its vertex order (true for
+// a carriageway segment that doesn't double back on itself).
+function latLonAtAxisPosition(way, origin, dx, dy, targetPos) {
+  const geom = way.geometry;
+  const positions = geom.map((pt) => axisPosition(pt, origin, dx, dy));
+  const increasing = positions[positions.length - 1] >= positions[0];
+  for (let i = 1; i < geom.length; i++) {
+    const p0 = positions[i - 1], p1 = positions[i];
+    const inSeg = increasing ? (targetPos >= p0 && targetPos <= p1) : (targetPos <= p0 && targetPos >= p1);
+    if (inSeg) {
+      const t = p1 !== p0 ? (targetPos - p0) / (p1 - p0) : 0;
+      const a = geom[i - 1], b = geom[i];
+      return { lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t };
+    }
+  }
+  return targetPos < Math.min(...positions) ? geom[increasing ? 0 : geom.length - 1] : geom[increasing ? geom.length - 1 : 0];
+}
+
+// Resamples a way to n evenly-spaced points across an ABSOLUTE axis-position
+// window (not the way's own full length) -- this is what makes corresponding
+// indices across two different-length, differently-directioned ways
+// represent the same physical location, so no bearing-based reversal is
+// needed before averaging (unlike parametrizing by each way's own length
+// fraction, which silently misaligns whenever the ways aren't the same
+// length -- see tmap spec.md's Divided-road carriageway collapse notes).
+function resampleWayInWindow(way, origin, dx, dy, windowMin, windowMax, n) {
   const points = [];
   for (let i = 0; i < n; i++) {
-    const target = (totalLength * i) / (n - 1);
-    let seg = 1;
-    while (seg < cumulative.length - 1 && cumulative[seg] < target) seg++;
-    const segStart = cumulative[seg - 1], segEnd = cumulative[seg];
-    const t = segEnd > segStart ? (target - segStart) / (segEnd - segStart) : 0;
-    const p0 = geom[seg - 1], p1 = geom[seg];
-    points.push({
-      lat: p0.lat + (p1.lat - p0.lat) * t,
-      lon: p0.lon + (p1.lon - p0.lon) * t
-    });
+    const target = windowMin + ((windowMax - windowMin) * i) / (n - 1);
+    points.push(latLonAtAxisPosition(way, origin, dx, dy, target));
   }
   return points;
+}
+
+// Trims a way's own geometry to the portion(s) OUTSIDE [windowMin, windowMax]
+// -- the "remainder" that stays a separate, uncollapsed segment rather than
+// being silently dropped or wrongly folded into the collapsed centerline.
+// Pieces shorter than MIN_REMAINDER_LENGTH_FT are discarded as boundary-
+// interpolation noise, not real leftover road.
+const MIN_REMAINDER_LENGTH_FT = 10;
+function trimOutsideWindow(way, origin, dx, dy, windowMin, windowMax) {
+  const geom = way.geometry;
+  const positions = geom.map((pt) => axisPosition(pt, origin, dx, dy));
+  const before = [];
+  const after = [];
+  for (let i = 0; i < geom.length; i++) {
+    if (positions[i] < windowMin) before.push(geom[i]);
+    else if (positions[i] > windowMax) after.push(geom[i]);
+  }
+  if (before.length) before.push(latLonAtAxisPosition(way, origin, dx, dy, windowMin));
+  if (after.length) after.unshift(latLonAtAxisPosition(way, origin, dx, dy, windowMax));
+
+  const remainders = [];
+  for (const geometry of [before, after]) {
+    if (geometry.length < 2) continue;
+    const remainder = { tags: way.tags, geometry, tier: way.tier };
+    if (wayLengthFt(remainder) >= MIN_REMAINDER_LENGTH_FT) remainders.push(remainder);
+  }
+  return remainders;
+}
+
+// § Divided-road carriageway collapse — whether two ways should be
+// considered part of the same carriageway, checked in order of reliability:
+// explicit tag, then oneway+opposite-bearing+windowed-overlap. The windowed
+// overlap test (rather than a simple nearest-point distance) is what
+// prevents two sequential, end-to-end blocks that never actually run
+// alongside each other from being mistaken for a parallel pair -- and lets
+// two ways of different lengths match on just their shared stretch.
+const CARRIAGEWAY_MIN_OVERLAP_FRACTION = 0.5;
+function isCarriagewayMatch(a, b, maxSepFt) {
+  if (!a.geometry || a.geometry.length < 2 || !b.geometry || b.geometry.length < 2) return false;
+  if (a.tags && a.tags.dual_carriageway === 'yes' && b.tags && b.tags.dual_carriageway === 'yes') return true;
+
+  const aOneway = a.tags && a.tags.oneway === 'yes';
+  const bOneway = b.tags && b.tags.oneway === 'yes';
+  if (!aOneway || !bOneway) return false;
+  if (!bearingsAreOpposite(wayBearing(a), wayBearing(b))) return false;
+  if (maxSepFt == null) return false;
+
+  const { dx, dy } = axisUnitVector(wayBearing(a));
+  const origin = a.geometry[0];
+  const [aMin, aMax] = wayAxisExtent(a, origin, dx, dy);
+  const [bMin, bMax] = wayAxisExtent(b, origin, dx, dy);
+  const windowMin = Math.max(aMin, bMin);
+  const windowMax = Math.min(aMax, bMax);
+  const overlapLen = windowMax - windowMin;
+  if (overlapLen <= 0) return false; // no shared stretch at all -- sequential blocks, not a pair
+
+  const shorterLen = Math.min(aMax - aMin, bMax - bMin);
+  if (shorterLen <= 0 || overlapLen / shorterLen < CARRIAGEWAY_MIN_OVERLAP_FRACTION) return false;
+
+  const n = CARRIAGEWAY_RESAMPLE_POINTS;
+  const aPts = resampleWayInWindow(a, origin, dx, dy, windowMin, windowMax, n);
+  const bPts = resampleWayInWindow(b, origin, dx, dy, windowMin, windowMax, n);
+  const distances = aPts.map((pt, i) => {
+    const { eastFt, northFt } = feetOffsetFrom(pt.lat, pt.lon, bPts[i].lat, bPts[i].lon);
+    return Math.hypot(eastFt, northFt);
+  });
+  const maxDist = Math.max(...distances);
+  const minDist = Math.min(...distances);
+  if (maxDist > maxSepFt) return false;
+  if (maxDist - minDist > maxSepFt * 0.75) return false;
+
+  return true;
+}
+
+// § Divided-road carriageway collapse — greedy mutual-compatibility
+// clustering: a candidate only joins a growing cluster if it matches EVERY
+// current member, not just the most recently added one. This is what keeps
+// a long, busy street from chaining an entire corridor into one cluster via
+// a series of individually-valid but not mutually-compatible links --
+// confirmed against real Berkeley OSM data during local experimentation
+// (see project notes). Cost is O(k^2) per name+tier group; real groups stay
+// small (tens of ways at most for a 0.5mi fetch), so this stays well under
+// a millisecond in practice.
+function detectCarriagewayClusters(ways, maxSepFt) {
+  if (maxSepFt == null) return ways.map((w) => [w]);
+  const remaining = ways.slice().sort((a, b) => wayLengthFt(b) - wayLengthFt(a));
+  const clusters = [];
+  while (remaining.length) {
+    const seed = remaining.shift();
+    const cluster = [seed];
+    let addedSomething = true;
+    while (addedSomething) {
+      addedSomething = false;
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        let compatibleWithAll = true;
+        for (const member of cluster) {
+          if (!isCarriagewayMatch(member, candidate, maxSepFt)) { compatibleWithAll = false; break; }
+        }
+        if (compatibleWithAll) {
+          cluster.push(candidate);
+          remaining.splice(i, 1);
+          addedSomething = true;
+          break;
+        }
+      }
+    }
+    clusters.push(cluster);
+  }
+  return clusters;
+}
+
+// Collapses a cluster of 2+ same-tier, same-name ways into one centerline
+// covering only their mutually-shared stretch of corridor (the intersection
+// of every member's own extent), plus any non-overlapping tail of a longer
+// member preserved as its own separate way rather than distorted into the
+// average or silently dropped.
+function collapseClusterWindowed(cluster) {
+  const reference = cluster.reduce((longest, w) => (wayLengthFt(w) > wayLengthFt(longest) ? w : longest));
+  const { dx, dy } = axisUnitVector(wayBearing(reference));
+  const origin = reference.geometry[0];
+
+  let windowMin = -Infinity, windowMax = Infinity;
+  for (const way of cluster) {
+    const [mn, mx] = wayAxisExtent(way, origin, dx, dy);
+    windowMin = Math.max(windowMin, mn);
+    windowMax = Math.min(windowMax, mx);
+  }
+
+  const n = CARRIAGEWAY_RESAMPLE_POINTS;
+  const perWayPoints = cluster.map((way) => resampleWayInWindow(way, origin, dx, dy, windowMin, windowMax, n));
+  const geometry = [];
+  for (let i = 0; i < n; i++) {
+    let lat = 0, lon = 0;
+    for (const pts of perWayPoints) { lat += pts[i].lat; lon += pts[i].lon; }
+    geometry.push({ lat: lat / cluster.length, lon: lon / cluster.length });
+  }
+  const collapsed = { tags: reference.tags, geometry, tier: reference.tier };
+
+  const remainders = [];
+  for (const way of cluster) {
+    remainders.push(...trimOutsideWindow(way, origin, dx, dy, windowMin, windowMax));
+  }
+  return { collapsed, remainders };
 }
 
 // Re-runs the pipeline against the last raw fetch (no new Overpass request)
@@ -1166,13 +1284,7 @@ function panMap(direction) {
 // § Scale behavior — steps through SCALE_PRESETS_FT; delta is +1 ("[",
 // increase scale/zoom out) or -1 ("]", decrease scale/zoom in).
 function changeScale(delta) {
-  if (!lastBbox) return;
-  const newIndex = clamp(scaleIndex + delta, 0, SCALE_PRESETS_FT.length - 1);
-  if (newIndex === scaleIndex) return;
-  scaleIndex = newIndex;
-  scaleSelect.value = String(scaleIndex);
-  refreshMap();
-  setMessage(formatScaleLabel(scaleIndex));
+  setScaleIndex(scaleIndex + delta);
 }
 
 document.addEventListener('keydown', (event) => {

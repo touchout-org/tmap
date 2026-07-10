@@ -14,7 +14,7 @@
   <form id="search-form">
     <label for="location-input" id="location-label">Enter an address or location to get started:</label>
     <input type="text" id="location-input" name="location" autocomplete="off">
-    <button type="submit">Search</button>
+    <button type="submit" id="btn-search">Search</button>
   </form>
 
   <div id="anchor-row">
@@ -35,7 +35,7 @@
     </div>
   </div>
 
-  <div id="message-display" role="status" aria-live="polite"></div>
+  <div id="message-display" role="alert" aria-live="assertive"></div>
 
   <hr>
   <h3>Controls</h3>
@@ -74,15 +74,15 @@
     <legend>Experimental tuning (developer use only)</legend>
     <div>
       <label for="tuning-density-cell-size">Density cell size (display pixels)</label>
-      <input type="number" id="tuning-density-cell-size" min="1" step="1">
+      <input type="number" id="tuning-density-cell-size" min="1" step="1" value="20">
     </div>
     <div>
       <label for="tuning-density-threshold">Density threshold (streets per cell)</label>
-      <input type="number" id="tuning-density-threshold" min="1" step="1">
+      <input type="number" id="tuning-density-threshold" min="1" step="1" value="2">
     </div>
     <div>
       <label for="tuning-carriageway-max-separation">Carriageway max separation (feet)</label>
-      <input type="number" id="tuning-carriageway-max-separation" min="1" step="1">
+      <input type="number" id="tuning-carriageway-max-separation" min="1" step="1" value="200">
     </div>
   </fieldset>
 
