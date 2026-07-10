@@ -140,6 +140,13 @@ const poiTooFarDialog = document.getElementById('poi-too-far-dialog');
 const poiTooFarMessage = document.getElementById('poi-too-far-message');
 const btnPoiShowAnyway = document.getElementById('btn-poi-show-anyway');
 const btnPoiCancel = document.getElementById('btn-poi-cancel');
+const btnEditMap = document.getElementById('btn-edit-map');
+const editMapDialog = document.getElementById('edit-map-dialog');
+const editMapPoisList = document.getElementById('edit-map-pois-list');
+const editMapStreetsList = document.getElementById('edit-map-streets-list');
+const editMapPedestrianList = document.getElementById('edit-map-pedestrian-list');
+const btnEditMapSave = document.getElementById('btn-edit-map-save');
+const btnEditMapCancel = document.getElementById('btn-edit-map-cancel');
 
 let hasAnchor = false;
 
@@ -182,6 +189,16 @@ let scaleIndex = DEFAULT_SCALE_INDEX;
 // zones, driven equally by the dialog checkboxes and the i/j/k/l hotkeys
 // (see spec § Command / hotkey mapping). [none checked] is the default.
 let labelZones = { top: false, bottom: false, left: false, right: false };
+
+// § Editing the Map — names of POIs/streets the user has unchecked in the
+// Edit Map dialog. Hidden features stay in additionalPois/lastWays (and in
+// the dialog's own list, so they can be turned back on) but are skipped by
+// rendering, hit-testing, and the tactile raster -- see visiblePois() /
+// visibleWays(). Reset whenever a brand-new anchor discards the old map
+// (see showAnchor); untouched by pan/scale/tuning changes, which reuse the
+// same fetched data.
+let hiddenPoiNames = new Set();
+let hiddenStreetNames = new Set();
 
 // The map's effective drawable region within the fixed DOT_GRID_WIDTH x
 // DOT_GRID_HEIGHT canvas, after carving out whichever label zones are
@@ -496,15 +513,21 @@ function addAdditionalPoi(shortName, lat, lon) {
 
 // § POIs — the anchor is always the first entry (value "anchor"), followed
 // by every additional POI (value = its index into additionalPois).
+// § Editing the Map — a POI hidden via the Edit Map dialog is left out of
+// this nav list too (it's no longer "on the map" to pan to), but option
+// values for additional POIs still carry their real additionalPois index,
+// not a position within this filtered list -- the change handler below
+// indexes additionalPois directly.
 function renderPoiList() {
   poiListSelect.innerHTML = '';
-  if (lastAnchorName) {
+  if (lastAnchorName && !hiddenPoiNames.has(lastAnchorName)) {
     const anchorOption = document.createElement('option');
     anchorOption.value = 'anchor';
     anchorOption.textContent = lastAnchorName;
     poiListSelect.appendChild(anchorOption);
   }
   additionalPois.forEach((poi, index) => {
+    if (hiddenPoiNames.has(poi.name)) return;
     const option = document.createElement('option');
     option.value = String(index);
     option.textContent = poi.name;
@@ -524,6 +547,99 @@ poiListSelect.addEventListener('change', () => {
   }
   const poi = additionalPois[Number(poiListSelect.value)];
   if (poi) panToPoint(poi.lat, poi.lon);
+});
+
+// § Editing the Map — every street/pathway name currently in lastWays
+// (regardless of hidden state -- the dialog must still list a hidden
+// feature so it can be turned back on), split into Streets vs Pedestrian
+// Pathways using the same class sets the dedup stage uses. A name group's
+// class is read from any one of its surviving ways: dedup (see
+// dedupRoadwayPedestrian) never leaves a mixed roadway+pedestrian group
+// under one name, so there's no ambiguity to resolve here.
+function collectStreetFeatureNames() {
+  const streets = new Set();
+  const pedestrian = new Set();
+  for (const way of lastWays) {
+    const name = way.tags && way.tags.name;
+    if (!name) continue;
+    const highway = way.tags && way.tags.highway;
+    if (PEDESTRIAN_CLASSES.has(highway)) pedestrian.add(name);
+    else streets.add(name);
+  }
+  return {
+    streets: Array.from(streets).sort((a, b) => a.localeCompare(b)),
+    pedestrian: Array.from(pedestrian).sort((a, b) => a.localeCompare(b))
+  };
+}
+
+// § Editing the Map — fills one group's list with a checkbox per feature
+// name, checked unless the name is in hiddenNames. Each checkbox carries
+// its feature name in a data attribute so Save can read it back without
+// needing a parallel index.
+function populateEditMapGroup(listContainer, names, hiddenNames, idPrefix) {
+  listContainer.innerHTML = '';
+  if (names.length === 0) {
+    const none = document.createElement('p');
+    none.textContent = '(none)';
+    listContainer.appendChild(none);
+    return;
+  }
+  names.forEach((name, index) => {
+    const id = `${idPrefix}-${index}`;
+    const row = document.createElement('div');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = id;
+    checkbox.checked = !hiddenNames.has(name);
+    checkbox.dataset.name = name;
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = name;
+    row.appendChild(checkbox);
+    row.appendChild(label);
+    listContainer.appendChild(row);
+  });
+}
+
+// § Editing the Map — every unchecked checkbox's feature name, read back
+// out of a populated group at Save time.
+function collectUncheckedNames(listContainer) {
+  const names = new Set();
+  listContainer.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    if (!checkbox.checked) names.add(checkbox.dataset.name);
+  });
+  return names;
+}
+
+// § Editing the Map — "a dialog with a list of all features, sorted
+// alphabetically and grouped by POIs, Streets, and Pedestrian Pathways...
+// everything is checked by default." Rebuilt from current map data every
+// time the dialog opens, so it always reflects whatever's actually on the
+// map (including features added since the dialog was last open).
+function openEditMapDialog() {
+  const poiNames = allPois().map((poi) => poi.name).sort((a, b) => a.localeCompare(b));
+  const { streets, pedestrian } = collectStreetFeatureNames();
+  populateEditMapGroup(editMapPoisList, poiNames, hiddenPoiNames, 'edit-map-poi');
+  populateEditMapGroup(editMapStreetsList, streets, hiddenStreetNames, 'edit-map-street');
+  populateEditMapGroup(editMapPedestrianList, pedestrian, hiddenStreetNames, 'edit-map-pedestrian');
+  editMapDialog.showModal();
+}
+
+btnEditMap.addEventListener('click', openEditMapDialog);
+
+// Cancel closes without touching hiddenPoiNames/hiddenStreetNames at all --
+// nothing was ever applied while the dialog was open, so there's nothing to
+// roll back.
+btnEditMapCancel.addEventListener('click', () => editMapDialog.close());
+
+btnEditMapSave.addEventListener('click', () => {
+  hiddenPoiNames = collectUncheckedNames(editMapPoisList);
+  const hiddenStreets = collectUncheckedNames(editMapStreetsList);
+  const hiddenPedestrian = collectUncheckedNames(editMapPedestrianList);
+  hiddenStreetNames = new Set([...hiddenStreets, ...hiddenPedestrian]);
+  editMapDialog.close();
+  renderPoiList();
+  refreshMap();
 });
 
 // Centers the view exactly on (lat, lon) and moves the cursor there too --
@@ -1035,6 +1151,11 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   lastAnchorLon = lon;
   lastAnchorName = shortName;
 
+  // § Editing the Map — a brand-new anchor is a brand-new feature set;
+  // whatever was hidden on the discarded map doesn't carry over.
+  hiddenPoiNames = new Set();
+  hiddenStreetNames = new Set();
+
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
   viewportCenterLat = lat;
@@ -1049,6 +1170,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   cursorSvg.hidden = false;
   scaleSelect.disabled = false;
   panButtons.forEach((btn) => { btn.disabled = false; });
+  btnEditMap.disabled = false;
   refreshMap();
 
   setMessage(shortName);
@@ -1146,7 +1268,7 @@ function renderScene(viewportBbox) {
   drawLabelZoneRects(svgNs);
 
   if (viewportBbox) {
-    renderStreetsAndAnchor(svgNs, viewportBbox, lastWays, lastAnchorLat, lastAnchorLon);
+    renderStreetsAndAnchor(svgNs, viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon);
     // Cursor is a single reused element, drawn last (on top). Only appended
     // once there's a real viewport/position -- cursorSvg.hidden doesn't
     // reliably suppress rendering for an SVG element, so keeping it out of
@@ -1232,10 +1354,15 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   // two read as clearly distinct shapes both on screen and by touch. Sized
   // to the same 3-dot footprint as the tactile marker (see drawSquarePixels)
   // for a consistent visual/tactile scale.
-  const anchorPoint = projectToSvg(anchorLat, anchorLon, bbox);
-  group.appendChild(createPoiMarkerSvg(svgNs, anchorPoint.x, anchorPoint.y, 'anchor-poi'));
+  // § Editing the Map — a POI unchecked in the Edit Map dialog is skipped
+  // here, same as a hidden street above.
+  if (!hiddenPoiNames.has(lastAnchorName)) {
+    const anchorPoint = projectToSvg(anchorLat, anchorLon, bbox);
+    group.appendChild(createPoiMarkerSvg(svgNs, anchorPoint.x, anchorPoint.y, 'anchor-poi'));
+  }
 
   for (const poi of additionalPois) {
+    if (hiddenPoiNames.has(poi.name)) continue;
     const p = projectToSvg(poi.lat, poi.lon, bbox);
     group.appendChild(createPoiMarkerSvg(svgNs, p.x, p.y, 'additional-poi'));
   }
@@ -1347,11 +1474,14 @@ function currentObjectNames() {
   const cursorGrid = cursorGridPosition(viewportBbox);
   if (!cursorGrid) return null;
   const names = new Set();
+  const ways = visibleWays();
   // § Map density evaluation and tier-based decluttering — a street hidden
   // by decluttering shouldn't be "feelable" via the cursor either, so hit
-  // testing respects the same tier cutoff as rendering.
-  const visibleMaxTier = computeVisibleMaxTier(viewportBbox, lastWays);
-  for (const way of lastWays) {
+  // testing respects the same tier cutoff as rendering. § Editing the Map —
+  // a street hidden via the Edit Map dialog is excluded the same way,
+  // before the tier cutoff is even computed.
+  const visibleMaxTier = computeVisibleMaxTier(viewportBbox, ways);
+  for (const way of ways) {
     if (way.tier > visibleMaxTier) continue;
     const name = way.tags && way.tags.name;
     if (!name || !way.geometry || way.geometry.length < 2) continue;
@@ -1371,7 +1501,9 @@ function currentObjectNames() {
 
   // § POIs — POI markers are point objects, hit the same way as a street
   // vertex: within CURSOR_HIT_RADIUS grid units of the cursor's center.
-  for (const poi of allPois()) {
+  // § Editing the Map — a POI hidden via the Edit Map dialog isn't
+  // "feelable" either, hence visiblePois() rather than allPois() here.
+  for (const poi of visiblePois()) {
     const p = projectToGrid(poi.lat, poi.lon, viewportBbox);
     if (Math.hypot(cursorGrid.x - p.x, cursorGrid.y - p.y) <= CURSOR_HIT_RADIUS) {
       names.add(poi.name);
@@ -1388,6 +1520,21 @@ function allPois() {
   if (lastAnchorName) pois.push({ name: lastAnchorName, lat: lastAnchorLat, lon: lastAnchorLon });
   pois.push(...additionalPois);
   return pois;
+}
+
+// § Editing the Map — allPois() minus whatever the user has unchecked in
+// the dialog. allPois() itself stays unfiltered so the dialog can still
+// list a hidden POI (and let it be turned back on); everywhere a POI is
+// actually shown, hit-tested, or brailled uses this instead.
+function visiblePois() {
+  return allPois().filter((poi) => !hiddenPoiNames.has(poi.name));
+}
+
+// § Editing the Map — lastWays minus any street/pathway name the user has
+// unchecked in the dialog. lastWays itself stays unfiltered for the same
+// reason as visiblePois() above.
+function visibleWays() {
+  return lastWays.filter((way) => !hiddenStreetNames.has(way.tags && way.tags.name));
 }
 
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
@@ -1762,12 +1909,16 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
     }
   }
 
+  // § Editing the Map — a POI unchecked in the Edit Map dialog is skipped
+  // here, same as on the on-screen SVG (see renderStreetsAndAnchor).
   const anchor = project(anchorLat, anchorLon);
-  if (anchor.x >= rectX && anchor.x <= rectMaxX && anchor.y >= rectY && anchor.y <= rectMaxY) {
+  if (!hiddenPoiNames.has(lastAnchorName) &&
+      anchor.x >= rectX && anchor.x <= rectMaxX && anchor.y >= rectY && anchor.y <= rectMaxY) {
     drawSquarePixels(pixels, displayW, displayH, anchor.x, anchor.y);
   }
 
   for (const poi of additionalPois) {
+    if (hiddenPoiNames.has(poi.name)) continue;
     const p = project(poi.lat, poi.lon);
     if (p.x >= rectX && p.x <= rectMaxX && p.y >= rectY && p.y <= rectMaxY) {
       drawSquarePixels(pixels, displayW, displayH, p.x, p.y);
@@ -1825,7 +1976,7 @@ function sendGraphicToDevice(device) {
   const displayW = numCols * 2;
   const displayH = numRows * 4;
   const cursor = cursorGridPosition(viewportBbox);
-  const pixels = rasterizeMapToPixels(viewportBbox, lastWays, lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
+  const pixels = rasterizeMapToPixels(viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
   sendPixelsToDevice(device, pixels, numCols, numRows);
 }
 

@@ -130,7 +130,8 @@ body {
 }
 
 #labels-dialog,
-#poi-too-far-dialog {
+#poi-too-far-dialog,
+#edit-map-dialog {
   border: 1px solid #999;
   border-radius: 4px;
   padding: 1rem 1.25rem;
@@ -139,6 +140,24 @@ body {
 
 #labels-dialog div {
   margin: 0.4rem 0;
+}
+
+/* § Editing the Map — each group's checkbox list scrolls on its own rather
+   than letting the whole dialog grow unbounded when a map has many streets. */
+#edit-map-dialog fieldset {
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.75rem;
+}
+
+#edit-map-dialog .edit-map-list {
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+#edit-map-dialog .edit-map-list div {
+  margin: 0.2rem 0;
 }
 
 /* § Experimental tuning fields — deliberately plain, dev-only surface, not
