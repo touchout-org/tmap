@@ -117,7 +117,6 @@ const mapSvg = document.getElementById('map');
 const messageDisplay = document.getElementById('message-display');
 const btnConnect = document.getElementById('btn-connect');
 const btnDisconnect = document.getElementById('btn-disconnect');
-const deviceInfo = document.getElementById('device-info');
 const scaleSelect = document.getElementById('scale-select');
 const btnPanNorth = document.getElementById('btn-pan-north');
 const btnPanSouth = document.getElementById('btn-pan-south');
@@ -412,12 +411,17 @@ async function runSearch(query) {
     return;
   }
 
+  // § Screen Layout — the edit field is only for entering a location to
+  // search for; once one's been found, its job here is done.
+  locationInput.value = '';
+
   const lat = parseFloat(place.lat);
   const lon = parseFloat(place.lon);
   const displayName = formatPlaceName(place);
+  const shortName = formatShortAddress(place);
 
   if (!hasAnchor) {
-    await createNewAnchor(displayName, lat, lon);
+    await createNewAnchor(displayName, shortName, lat, lon);
     return;
   }
 
@@ -429,18 +433,21 @@ async function runSearch(query) {
   const thresholdFt = (POI_DISTANCE_THRESHOLD_MILES * MILES_TO_METERS) / FEET_TO_METERS;
 
   if (distFt > thresholdFt) {
-    promptTooFarPoi(displayName, lat, lon, distFt);
+    promptTooFarPoi(displayName, shortName, lat, lon, distFt);
     return;
   }
 
-  addAdditionalPoi(displayName, lat, lon);
+  addAdditionalPoi(shortName, lat, lon);
 }
 
 // § POIs — fetches and displays a brand-new anchor, discarding whatever map
 // (and additional POIs) may already be showing. Used both for the very
 // first search and for "Show new location" when a later search is too far
-// from the current anchor to fit on the same map.
-async function createNewAnchor(displayName, lat, lon) {
+// from the current anchor to fit on the same map. displayName (the fuller
+// name) is used only for the on-screen title and heading; shortName (street
+// address only) is what's spoken/brailled everywhere else -- see
+// formatShortAddress.
+async function createNewAnchor(displayName, shortName, lat, lon) {
   const bbox = squareBoundingBox(lat, lon, POI_DISTANCE_THRESHOLD_MILES);
   let ways;
   try {
@@ -451,19 +458,19 @@ async function createNewAnchor(displayName, lat, lon) {
   }
   additionalPois = [];
   renderPoiList();
-  showAnchor(displayName, lat, lon, bbox, ways);
+  showAnchor(displayName, shortName, lat, lon, bbox, ways);
 }
 
 // § Additional POIs — "The new location is [distance] away from [anchor
 // POI]. That's too far away for a single map." Confirming discards the
 // current map and makes the new location the anchor; cancelling leaves the
 // current map untouched.
-function promptTooFarPoi(displayName, lat, lon, distFt) {
-  pendingFarPoi = { displayName, lat, lon };
+function promptTooFarPoi(displayName, shortName, lat, lon, distFt) {
+  pendingFarPoi = { displayName, shortName, lat, lon };
   poiTooFarMessage.textContent =
     `The new location is ${Math.round(distFt)} ft away from ${lastAnchorName}. ` +
     `That's too far away for a single map.`;
-  btnPoiShowAnyway.textContent = `Show ${displayName}`;
+  btnPoiShowAnyway.textContent = `Show ${shortName}`;
   poiTooFarDialog.showModal();
 }
 
@@ -471,7 +478,7 @@ btnPoiShowAnyway.addEventListener('click', () => {
   poiTooFarDialog.close();
   const pending = pendingFarPoi;
   pendingFarPoi = null;
-  if (pending) createNewAnchor(pending.displayName, pending.lat, pending.lon);
+  if (pending) createNewAnchor(pending.displayName, pending.shortName, pending.lat, pending.lon);
 });
 btnPoiCancel.addEventListener('click', () => {
   poiTooFarDialog.close();
@@ -479,10 +486,10 @@ btnPoiCancel.addEventListener('click', () => {
 });
 
 // § Additional POIs — adds a triangle-marker POI to the current map, then
-// pans to center it (announcing distance/direction from the anchor, same
-// as an explicit pan).
-function addAdditionalPoi(displayName, lat, lon) {
-  additionalPois.push({ name: displayName, lat, lon });
+// pans to center it and moves the cursor there (announcing distance/
+// direction from the anchor, same as an explicit pan).
+function addAdditionalPoi(shortName, lat, lon) {
+  additionalPois.push({ name: shortName, lat, lon });
   renderPoiList();
   panToPoint(lat, lon);
 }
@@ -499,7 +506,7 @@ function renderPoiList() {
 }
 
 // § Additional POIs — "Selecting an item from the list box (or arrowing
-// through the list) pans to that POI." A multi-row <select> already fires
+// through the list) pans to that POI." A native <select> already fires
 // 'change' on every arrow-key move, not just on a committed selection, so
 // this alone covers both interactions.
 poiListSelect.addEventListener('change', () => {
@@ -507,14 +514,16 @@ poiListSelect.addEventListener('change', () => {
   if (poi) panToPoint(poi.lat, poi.lon);
 });
 
-// Centers the view exactly on (lat, lon) -- used for panning to a POI,
-// as opposed to panMap's fixed-amount directional step. The cursor's own
-// real-world position is left untouched; refreshMap's keepCursorInView
-// shifts the view further if needed to keep it visible, the same as it
-// does after a scale change.
+// Centers the view exactly on (lat, lon) and moves the cursor there too --
+// used for panning to a POI (newly added, or selected from the list), as
+// opposed to panMap's fixed-amount directional step, which never moves the
+// cursor. refreshMap's keepCursorInView shifts the view further if needed
+// to keep the cursor visible, the same as it does after a scale change.
 function panToPoint(lat, lon) {
   viewportCenterLat = lat;
   viewportCenterLon = lon;
+  cursorLat = lat;
+  cursorLon = lon;
   refreshMap();
   announcePositionRelativeToAnchor();
 }
@@ -550,6 +559,18 @@ function formatPlaceName(place) {
   if (address.state) parts.push(address.state);
   if (address.postcode) parts.push(address.postcode);
   return parts.length ? parts.join(', ') : place.display_name;
+}
+
+// § POIs — the short form used whenever a POI is spoken, brailled, or
+// otherwise referenced (message field, POI list entries, the too-far
+// dialog): street address only, no business/POI name, city, state, or zip.
+// formatPlaceName's fuller result is reserved for the on-screen title and
+// H2 heading only. Falls back to the full name for the rare place with no
+// house_number/road at all (e.g. a searched city or neighborhood).
+function formatShortAddress(place) {
+  const address = place.address || {};
+  const streetLine = [address.house_number, address.road].filter(Boolean).join(' ');
+  return streetLine || formatPlaceName(place);
 }
 
 // § Data sources — square region centered on the anchor POI, half-side = POI
@@ -981,7 +1002,11 @@ function cursorGridPosition(viewportBbox) {
   };
 }
 
-function showAnchor(displayName, lat, lon, bbox, ways) {
+// displayName (fuller: may include a business/POI name, city, state, zip)
+// is used only for the on-screen title and heading. shortName (street
+// address only, see formatShortAddress) is what's spoken/brailled
+// everywhere else, including this initial "found it" announcement.
+function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   document.title = `DotTMAP — ${displayName}`;
   anchorHeading.textContent = displayName;
   anchorHeading.hidden = false;
@@ -996,7 +1021,7 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
   lastWays = processWays(lastRawWays);
   lastAnchorLat = lat;
   lastAnchorLon = lon;
-  lastAnchorName = displayName;
+  lastAnchorName = shortName;
 
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
@@ -1014,7 +1039,7 @@ function showAnchor(displayName, lat, lon, bbox, ways) {
   panButtons.forEach((btn) => { btn.disabled = false; });
   refreshMap();
 
-  setMessage(displayName);
+  setMessage(shortName);
 }
 
 function clamp(value, min, max) {
@@ -1804,12 +1829,6 @@ function setConnectedState(device) {
   currentDevice = device;
   btnConnect.hidden = true;
   btnDisconnect.hidden = false;
-  // Diagnostic: show what the device actually reports for its grid
-  // dimensions, rather than trusting our assumed 30x10 (60x40 dots).
-  deviceInfo.textContent =
-    `Device: numberCellColumns=${device.numberCellColumns}, ` +
-    `numberCellRows=${device.numberCellRows}, ` +
-    `numberBrailleCellColumns=${device.numberBrailleCellColumns}`;
   // Graphic renders immediately (matches DotSVG); the message-line write is
   // delayed 1s -- confirmed by testing this avoids a ~15s hold-up before the
   // graphic write completes, so it stays even though the actual deformed-grid
@@ -1827,7 +1846,6 @@ function setDisconnectedState() {
   currentDevice = null;
   btnConnect.hidden = false;
   btnDisconnect.hidden = true;
-  deviceInfo.textContent = '';
   setMessage('Disconnected');
 }
 

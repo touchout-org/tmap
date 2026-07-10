@@ -26,7 +26,7 @@
   <div id="map-row">
     <div id="poi-list-container">
       <label for="poi-list" id="poi-list-label">POIs</label>
-      <select id="poi-list" size="6" disabled></select>
+      <select id="poi-list" disabled></select>
     </div>
     <div id="map-container">
       <svg id="map" viewBox="0 0 600 400" role="img" aria-label="Street map"></svg>
@@ -56,8 +56,6 @@
     <button id="btn-labels" type="button">Braille Labels...</button>
   </div>
 
-  <p id="device-info"></p>
-
   <dialog id="labels-dialog" aria-labelledby="labels-dialog-heading">
     <h3 id="labels-dialog-heading">Braille Labels</h3>
     <p>Choose which edges of the display show braille street labels.</p>
@@ -80,8 +78,7 @@
     <button id="btn-labels-close" type="button">Close</button>
   </dialog>
 
-  <hr>
-  <fieldset id="tuning-fields">
+  <fieldset id="tuning-fields" hidden>
     <legend>Experimental tuning (developer use only)</legend>
     <div>
       <label for="tuning-density-cell-size">Density cell size (display pixels)</label>
