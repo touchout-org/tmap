@@ -89,6 +89,7 @@ The `i`/`j`/`k`/`l` hotkeys and the Braille Labels dialog's four checkboxes driv
 * Braille labels also stay a fixed size regardless of scale/zoom.
 * Street segments are open lines.
 * POIs are marked with a few different small, solid shapes — circles, triangles, or squares — defined by a point at their center. They fit into a 4x4 display-pixel patch and do not resize with map scale. Although the markers have visual size and shape, they are treated as point objects in the SVG, not as shapes.
+  * **Note (2026-07-10):** for now, every POI marker — anchor and additional alike — is a solid 3x3-dot square with all corners filled, rather than the varied circle/triangle/square shapes above. This is a temporary simplification for legibility/prominence, not a final decision; distinguishing POI types by shape is deferred and will be revisited.
 * Line objects can have a line style of solid, dotted, or dashed. These line types may be used to differentiate different types of roadway or pedestrian path. Solid is the default: densely packed dots on the display. Dotted skips approximately every other dot of the solid line; dashed skips approximately every third dot of the solid line (exceptions are OK provided the majority of the line conforms).
 * The cursor is a 4x4 circle (a square with corner dots removed).
 
@@ -208,11 +209,11 @@ If a pan would leave the cursor outside the view on the edge opposite the pan di
 
 ## POIs
 
-The location edit field at the top of the main window is used to begin the DotTMAP experience. Entering a location returns the anchor POI, generates a map centered on that point, and adds a solid circle marker to that POI.
+The location edit field at the top of the main window is used to begin the DotTMAP experience. Entering a location returns the anchor POI, generates a map centered on that point, and adds a solid circle marker to that POI (currently a 3x3 square, like every other POI marker — see the note under [SVG Display Requirements](#svg-display-requirements)).
 
 ### Additional POIs
 
-Additional POIs can be added to a map by entering additional locations. Each new POI gets a triangle marker.
+Additional POIs can be added to a map by entering additional locations. Each new POI gets a triangle marker (currently a 3x3 square, like every other POI marker — see the note under [SVG Display Requirements](#svg-display-requirements)).
 
 If a subsequent POI location is more than [threshold distance] away from the anchor POI, we get a true modal dialog that says "The new location is [distance] away from [anchor POI]. That's too far away for a single map." Buttons are "Show [new POI]" and "Cancel." If they select the new location, the old map is discarded and the new POI becomes the anchor with a new map generated around it.
 
