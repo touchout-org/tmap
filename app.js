@@ -27,6 +27,7 @@ const LOCAL_TEST_DATA_FILES = {
   '2318 fillmore st, san francisco, ca': 'test-data/2318-fillmore-st-san-francisco-ca.json',
   '1516 hearst ave, berkeley, ca': 'test-data/1516-hearst-ave-berkeley-ca.json',
   '2000 university ave, berkeley, ca': 'test-data/2000-university-ave-berkeley-ca.json',
+  '261 6th ave, brooklyn, ny': 'test-data/261-6th-ave-brooklyn-ny.json',
   // Near-POIs (within 0.5mi of the matching anchor above -- joins the
   // current map as an additional POI). See test-data/README.md for exact
   // measured distances.
@@ -36,11 +37,17 @@ const LOCAL_TEST_DATA_FILES = {
   '1400 hearst ave, berkeley, ca': 'test-data/1400-hearst-ave-berkeley-ca.json',
   '2100 university ave, berkeley, ca': 'test-data/2100-university-ave-berkeley-ca.json',
   '2224 shattuck ave, berkeley, ca': 'test-data/2224-shattuck-ave-berkeley-ca.json',
+  // All three within 0.5mi of the 261 6th Ave anchor -- together they make
+  // a real multi-POI map without needing a too-far case of their own.
+  '592 carroll st, brooklyn, ny': 'test-data/592-carroll-st-brooklyn-ny.json',
+  '26 garfield pl, brooklyn, ny': 'test-data/26-garfield-pl-brooklyn-ny.json',
+  '851 president st, brooklyn, ny': 'test-data/851-president-st-brooklyn-ny.json',
   // Too-far POIs (beyond 0.5mi of the matching anchor above -- triggers the
   // "that's too far for one map" dialog; each also has full ways data, so
-  // "Show new location" can promote it to a new anchor from cache too). The
-  // three anchors above are all >0.5mi from each other as well, so any one
-  // of them also works as a too-far POI relative to either of the others.
+  // "Show new location" can promote it to a new anchor from cache too). All
+  // four anchors above are >0.5mi from each other too, so any one also
+  // works as a too-far POI relative to any of the others (Brooklyn is
+  // obviously far from all three CA anchors).
   '2400 fillmore st, san francisco, ca': 'test-data/2400-fillmore-st-san-francisco-ca.json',
   '1801 california st, san francisco, ca': 'test-data/1801-california-st-san-francisco-ca.json',
   '1520 walnut st, berkeley, ca': 'test-data/1520-walnut-st-berkeley-ca.json'

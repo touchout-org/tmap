@@ -82,13 +82,14 @@ async function fetchWays(bbox, attempt = 1) {
 
 const cases = [
   // Anchors -- each also fetched with full ways data, so any of them can
-  // stand in as a "too far" promotion target for either of the other two.
-  // See test-data/README.md for the measured distances between every pair
-  // below (near-POI vs. too-far), since Nominatim's actual house-number
-  // spacing turned out much wider/narrower than expected in a few cases.
+  // stand in as a "too far" promotion target for another. See
+  // test-data/README.md for the measured distances between every pair below
+  // (near-POI vs. too-far), since Nominatim's actual house-number spacing
+  // turned out much wider/narrower than expected in a few cases.
   { query: '2318 Fillmore St, San Francisco, CA', file: '2318-fillmore-st-san-francisco-ca.json' },
   { query: '1516 Hearst Ave, Berkeley, CA', file: '1516-hearst-ave-berkeley-ca.json' },
   { query: '2000 University Ave, Berkeley, CA', file: '2000-university-ave-berkeley-ca.json' },
+  { query: '261 6th Ave, Brooklyn, NY', file: '261-6th-ave-brooklyn-ny.json' },
 
   // Near-POIs -- confirmed within 0.5mi of their anchor above (see README),
   // for testing "add an additional POI to the current map."
@@ -98,10 +99,17 @@ const cases = [
   { query: '1400 Hearst Ave, Berkeley, CA', file: '1400-hearst-ave-berkeley-ca.json' },
   { query: '2100 University Ave, Berkeley, CA', file: '2100-university-ave-berkeley-ca.json' },
   { query: '2224 Shattuck Ave, Berkeley, CA', file: '2224-shattuck-ave-berkeley-ca.json' },
+  // All three fit within 0.5mi of the 261 6th Ave anchor (see README) --
+  // together they make a real multi-POI map without a single too-far case.
+  { query: '592 Carroll St, Brooklyn, NY', file: '592-carroll-st-brooklyn-ny.json' },
+  { query: '26 Garfield Pl, Brooklyn, NY', file: '26-garfield-pl-brooklyn-ny.json' },
+  { query: '851 President St, Brooklyn, NY', file: '851-president-st-brooklyn-ny.json' },
 
   // Too-far POIs -- confirmed beyond 0.5mi of their anchor above (see
   // README), for testing the "that's too far for one map" dialog and (via
-  // "Show new location") promoting one to a brand-new anchor.
+  // "Show new location") promoting one to a brand-new anchor. Any of the
+  // four anchors above also works as a too-far case for any of the others
+  // (Brooklyn is obviously >0.5mi from all three CA anchors too).
   { query: '2400 Fillmore St, San Francisco, CA', file: '2400-fillmore-st-san-francisco-ca.json' },
   { query: '1801 California St, San Francisco, CA', file: '1801-california-st-san-francisco-ca.json' },
   { query: '1520 Walnut St, Berkeley, CA', file: '1520-walnut-st-berkeley-ca.json' }
