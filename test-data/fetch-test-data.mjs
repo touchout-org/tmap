@@ -51,7 +51,11 @@ async function geocode(query) {
   return data[0];
 }
 
-async function fetchWays(bbox) {
+// Retries on 429/504 with growing backoff -- the public Overpass instance
+// rate-limits hard under the kind of repeated same-session requests this
+// script itself makes (the same flakiness the whole local-cache feature
+// exists to avoid during actual app testing).
+async function fetchWays(bbox, attempt = 1) {
   const query = `[out:json][timeout:25];way["highway"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});out geom;`;
   const res = await fetch(OVERPASS_URL, {
     method: 'POST',
@@ -63,6 +67,12 @@ async function fetchWays(bbox) {
     body: 'data=' + encodeURIComponent(query)
   });
   if (!res.ok) {
+    if ((res.status === 429 || res.status === 504) && attempt < 4) {
+      const waitMs = attempt * 15000;
+      console.log(`  got ${res.status}, retrying in ${waitMs / 1000}s (attempt ${attempt + 1}/4)`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      return fetchWays(bbox, attempt + 1);
+    }
     const text = await res.text().catch(() => '');
     throw new Error('overpass failed: ' + res.status + ' ' + text.slice(0, 300));
   }
@@ -71,9 +81,30 @@ async function fetchWays(bbox) {
 }
 
 const cases = [
+  // Anchors -- each also fetched with full ways data, so any of them can
+  // stand in as a "too far" promotion target for either of the other two.
+  // See test-data/README.md for the measured distances between every pair
+  // below (near-POI vs. too-far), since Nominatim's actual house-number
+  // spacing turned out much wider/narrower than expected in a few cases.
   { query: '2318 Fillmore St, San Francisco, CA', file: '2318-fillmore-st-san-francisco-ca.json' },
   { query: '1516 Hearst Ave, Berkeley, CA', file: '1516-hearst-ave-berkeley-ca.json' },
-  { query: '2000 University Ave, Berkeley, CA', file: '2000-university-ave-berkeley-ca.json' }
+  { query: '2000 University Ave, Berkeley, CA', file: '2000-university-ave-berkeley-ca.json' },
+
+  // Near-POIs -- confirmed within 0.5mi of their anchor above (see README),
+  // for testing "add an additional POI to the current map."
+  { query: '2323 Fillmore St, San Francisco, CA', file: '2323-fillmore-st-san-francisco-ca.json' },
+  { query: '2199 Sacramento St, San Francisco, CA', file: '2199-sacramento-st-san-francisco-ca.json' },
+  { query: '1600 Hearst Ave, Berkeley, CA', file: '1600-hearst-ave-berkeley-ca.json' },
+  { query: '1400 Hearst Ave, Berkeley, CA', file: '1400-hearst-ave-berkeley-ca.json' },
+  { query: '2100 University Ave, Berkeley, CA', file: '2100-university-ave-berkeley-ca.json' },
+  { query: '2224 Shattuck Ave, Berkeley, CA', file: '2224-shattuck-ave-berkeley-ca.json' },
+
+  // Too-far POIs -- confirmed beyond 0.5mi of their anchor above (see
+  // README), for testing the "that's too far for one map" dialog and (via
+  // "Show new location") promoting one to a brand-new anchor.
+  { query: '2400 Fillmore St, San Francisco, CA', file: '2400-fillmore-st-san-francisco-ca.json' },
+  { query: '1801 California St, San Francisco, CA', file: '1801-california-st-san-francisco-ca.json' },
+  { query: '1520 Walnut St, Berkeley, CA', file: '1520-walnut-st-berkeley-ca.json' }
 ];
 
 for (const c of cases) {
@@ -101,10 +132,11 @@ for (const c of cases) {
   console.log('  got', ways.length, 'ways for', place.display_name);
   fs.writeFileSync(path.join(OUT_DIR, c.file), JSON.stringify({ query: c.query, geocode: place, ways }));
   console.log('  wrote', c.file);
-  // Polite delay between requests -- both Nominatim's and Overpass's usage
-  // policies ask for max ~1 req/sec; this script only ever runs a handful
-  // of times total, so there's no reason to push that.
-  await new Promise((r) => setTimeout(r, 2000));
+  // Delay between requests, well past the ~1 req/sec Nominatim/Overpass
+  // usage policies ask for -- this script only runs a handful of times
+  // total, so there's no reason to push the limit and risk the 429/504
+  // backoff above.
+  await new Promise((r) => setTimeout(r, 4000));
 }
 
 console.log('Done.');

@@ -23,9 +23,27 @@ const USE_LOCAL_TEST_DATA_CACHE = false;
 // way as the existing ones -- see test-data/README.md) whenever a new
 // address is needed for repeated local testing.
 const LOCAL_TEST_DATA_FILES = {
+  // Anchors.
   '2318 fillmore st, san francisco, ca': 'test-data/2318-fillmore-st-san-francisco-ca.json',
   '1516 hearst ave, berkeley, ca': 'test-data/1516-hearst-ave-berkeley-ca.json',
-  '2000 university ave, berkeley, ca': 'test-data/2000-university-ave-berkeley-ca.json'
+  '2000 university ave, berkeley, ca': 'test-data/2000-university-ave-berkeley-ca.json',
+  // Near-POIs (within 0.5mi of the matching anchor above -- joins the
+  // current map as an additional POI). See test-data/README.md for exact
+  // measured distances.
+  '2323 fillmore st, san francisco, ca': 'test-data/2323-fillmore-st-san-francisco-ca.json',
+  '2199 sacramento st, san francisco, ca': 'test-data/2199-sacramento-st-san-francisco-ca.json',
+  '1600 hearst ave, berkeley, ca': 'test-data/1600-hearst-ave-berkeley-ca.json',
+  '1400 hearst ave, berkeley, ca': 'test-data/1400-hearst-ave-berkeley-ca.json',
+  '2100 university ave, berkeley, ca': 'test-data/2100-university-ave-berkeley-ca.json',
+  '2224 shattuck ave, berkeley, ca': 'test-data/2224-shattuck-ave-berkeley-ca.json',
+  // Too-far POIs (beyond 0.5mi of the matching anchor above -- triggers the
+  // "that's too far for one map" dialog; each also has full ways data, so
+  // "Show new location" can promote it to a new anchor from cache too). The
+  // three anchors above are all >0.5mi from each other as well, so any one
+  // of them also works as a too-far POI relative to either of the others.
+  '2400 fillmore st, san francisco, ca': 'test-data/2400-fillmore-st-san-francisco-ca.json',
+  '1801 california st, san francisco, ca': 'test-data/1801-california-st-san-francisco-ca.json',
+  '1520 walnut st, berkeley, ca': 'test-data/1520-walnut-st-berkeley-ca.json'
 };
 
 // In-memory cache of already-fetched test-data files, so geocode() and
