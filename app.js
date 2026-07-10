@@ -457,8 +457,8 @@ async function createNewAnchor(displayName, shortName, lat, lon) {
     return;
   }
   additionalPois = [];
-  renderPoiList();
   showAnchor(displayName, shortName, lat, lon, bbox, ways);
+  renderPoiList();
 }
 
 // § Additional POIs — "The new location is [distance] away from [anchor
@@ -494,15 +494,23 @@ function addAdditionalPoi(shortName, lat, lon) {
   panToPoint(lat, lon);
 }
 
+// § POIs — the anchor is always the first entry (value "anchor"), followed
+// by every additional POI (value = its index into additionalPois).
 function renderPoiList() {
   poiListSelect.innerHTML = '';
+  if (lastAnchorName) {
+    const anchorOption = document.createElement('option');
+    anchorOption.value = 'anchor';
+    anchorOption.textContent = lastAnchorName;
+    poiListSelect.appendChild(anchorOption);
+  }
   additionalPois.forEach((poi, index) => {
     const option = document.createElement('option');
     option.value = String(index);
     option.textContent = poi.name;
     poiListSelect.appendChild(option);
   });
-  poiListSelect.disabled = additionalPois.length === 0;
+  poiListSelect.disabled = !lastAnchorName;
 }
 
 // § Additional POIs — "Selecting an item from the list box (or arrowing
@@ -510,6 +518,10 @@ function renderPoiList() {
 // 'change' on every arrow-key move, not just on a committed selection, so
 // this alone covers both interactions.
 poiListSelect.addEventListener('change', () => {
+  if (poiListSelect.value === 'anchor') {
+    panToPoint(lastAnchorLat, lastAnchorLon);
+    return;
+  }
   const poi = additionalPois[Number(poiListSelect.value)];
   if (poi) panToPoint(poi.lat, poi.lon);
 });
@@ -1215,23 +1227,29 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
     group.appendChild(line);
   }
 
+  // § POIs — every POI marker (anchor and additional alike) is a solid
+  // square, all corners intact -- unlike the cursor's hollow ring, so the
+  // two read as clearly distinct shapes both on screen and by touch. Sized
+  // to the same 3-dot footprint as the tactile marker (see drawSquarePixels)
+  // for a consistent visual/tactile scale.
   const anchorPoint = projectToSvg(anchorLat, anchorLon, bbox);
-  const marker = document.createElementNS(svgNs, 'circle');
-  marker.setAttribute('cx', anchorPoint.x.toFixed(1));
-  marker.setAttribute('cy', anchorPoint.y.toFixed(1));
-  marker.setAttribute('r', 4);
-  marker.setAttribute('class', 'anchor-poi');
-  group.appendChild(marker);
+  group.appendChild(createPoiMarkerSvg(svgNs, anchorPoint.x, anchorPoint.y, 'anchor-poi'));
 
-  // § POIs — "Each new POI gets a triangle marker." Sized to roughly match
-  // the anchor's circle marker.
   for (const poi of additionalPois) {
     const p = projectToSvg(poi.lat, poi.lon, bbox);
-    const triangle = document.createElementNS(svgNs, 'polygon');
-    triangle.setAttribute('points', `${p.x},${(p.y - 5).toFixed(1)} ${(p.x - 4.3).toFixed(1)},${(p.y + 3).toFixed(1)} ${(p.x + 4.3).toFixed(1)},${(p.y + 3).toFixed(1)}`);
-    triangle.setAttribute('class', 'additional-poi');
-    group.appendChild(triangle);
+    group.appendChild(createPoiMarkerSvg(svgNs, p.x, p.y, 'additional-poi'));
   }
+}
+
+function createPoiMarkerSvg(svgNs, x, y, className) {
+  const size = 3 * SVG_UNITS_PER_DOT;
+  const rect = document.createElementNS(svgNs, 'rect');
+  rect.setAttribute('x', (x - size / 2).toFixed(1));
+  rect.setAttribute('y', (y - size / 2).toFixed(1));
+  rect.setAttribute('width', size);
+  rect.setAttribute('height', size);
+  rect.setAttribute('class', className);
+  return rect;
 }
 
 // § Map density evaluation and tier-based decluttering — escalating
@@ -1488,8 +1506,19 @@ function changeScale(delta) {
   setScaleIndex(scaleIndex + delta);
 }
 
+// Form controls (the search field, POI/scale dropdowns, tuning number
+// fields, dialog checkboxes) all have their own meaning for arrow keys and
+// letter keys -- the app-level hotkey handler below must never compete with
+// them, or e.g. arrowing through the POI dropdown also moves the map
+// cursor. Checking the focused element's tag name (rather than listing
+// specific IDs) covers every current and future form control uniformly.
+const FORM_CONTROL_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
+function isFormControlFocused() {
+  return FORM_CONTROL_TAGS.has(document.activeElement && document.activeElement.tagName);
+}
+
 document.addEventListener('keydown', (event) => {
-  if (document.activeElement === locationInput) return;
+  if (isFormControlFocused()) return;
 
   // § Command / hotkey mapping — label zone toggles work regardless of
   // whether a map is loaded or the Braille Labels dialog is open (the
@@ -1630,17 +1659,6 @@ function clipSegmentToRect(x0, y0, x1, y1, minX, minY, maxX, maxY) {
   };
 }
 
-function drawFilledCircle(pixels, w, h, cx, cy, r) {
-  cx = Math.round(cx); cy = Math.round(cy);
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      if (dx * dx + dy * dy <= r * r) {
-        setGridPixel(pixels, w, h, cx + dx, cy + dy);
-      }
-    }
-  }
-}
-
 // § SVG Display Requirements — cursor is "a 4x4 square with corner dots
 // removed": an 8-dot ring around a 2x2 unfilled center. (cx,cy) is the
 // square's upper-left interior corner.
@@ -1657,18 +1675,15 @@ function drawCursorPixels(pixels, w, h, cx, cy) {
   }
 }
 
-// § POIs — a small filled triangle, roughly matching drawFilledCircle's
-// footprint at the anchor's own radius (1), to distinguish additional POIs
-// from the anchor's circle on the tactile display.
-function drawTrianglePixels(pixels, w, h, cx, cy) {
+// § POIs — a solid 3x3 dot square, all corners filled, for every POI
+// marker (anchor and additional alike) -- clearly distinct from the
+// cursor's hollow ring, and more prominent than a single dot.
+function drawSquarePixels(pixels, w, h, cx, cy) {
   cx = Math.round(cx); cy = Math.round(cy);
-  const offsets = [
-    [0, -1],
-    [-1, 0], [0, 0], [1, 0],
-    [-1, 1], [0, 1], [1, 1]
-  ];
-  for (const [dx, dy] of offsets) {
-    setGridPixel(pixels, w, h, cx + dx, cy + dy);
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      setGridPixel(pixels, w, h, cx + dx, cy + dy);
+    }
   }
 }
 
@@ -1749,13 +1764,13 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
 
   const anchor = project(anchorLat, anchorLon);
   if (anchor.x >= rectX && anchor.x <= rectMaxX && anchor.y >= rectY && anchor.y <= rectMaxY) {
-    drawFilledCircle(pixels, displayW, displayH, anchor.x, anchor.y, 1);
+    drawSquarePixels(pixels, displayW, displayH, anchor.x, anchor.y);
   }
 
   for (const poi of additionalPois) {
     const p = project(poi.lat, poi.lon);
     if (p.x >= rectX && p.x <= rectMaxX && p.y >= rectY && p.y <= rectMaxY) {
-      drawTrianglePixels(pixels, displayW, displayH, p.x, p.y);
+      drawSquarePixels(pixels, displayW, displayH, p.x, p.y);
     }
   }
 
