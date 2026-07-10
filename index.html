@@ -24,6 +24,10 @@
   </div>
 
   <div id="map-row">
+    <div id="poi-list-container">
+      <label for="poi-list" id="poi-list-label">POIs</label>
+      <select id="poi-list" size="6" disabled></select>
+    </div>
     <div id="map-container">
       <svg id="map" viewBox="0 0 600 400" role="img" aria-label="Street map"></svg>
     </div>
@@ -34,6 +38,13 @@
       <button id="btn-pan-south" type="button" disabled>South</button>
     </div>
   </div>
+
+  <dialog id="poi-too-far-dialog" aria-labelledby="poi-too-far-heading">
+    <h3 id="poi-too-far-heading">Location Too Far</h3>
+    <p id="poi-too-far-message"></p>
+    <button id="btn-poi-show-anyway" type="button">Show new location</button>
+    <button id="btn-poi-cancel" type="button">Cancel</button>
+  </dialog>
 
   <div id="message-display" role="alert" aria-live="assertive"></div>
 

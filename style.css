@@ -50,6 +50,23 @@ body {
   min-width: 0;
 }
 
+/* § POIs — the list box of additional POIs, to the left of the map. Fixed
+   width on the select itself (not just the container) since a <select>
+   otherwise sizes to its longest option's full text, which can badly
+   overflow the page for a long address. */
+#poi-list-container {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 9rem;
+}
+
+#poi-list {
+  width: 9rem;
+  overflow-x: hidden;
+  text-overflow: ellipsis;
+}
+
 /* § Screen Layout — "Move Map," arranged in a plus sign: N top-center,
    W/E either side of the (empty) middle, S bottom-center. */
 #move-map {
@@ -87,6 +104,10 @@ body {
   fill: #1a1a1a;
 }
 
+#map .additional-poi {
+  fill: #1a1a1a;
+}
+
 #map .cursor {
   fill: none;
   stroke: #c0392b;
@@ -108,10 +129,12 @@ body {
   flex-wrap: wrap;
 }
 
-#labels-dialog {
+#labels-dialog,
+#poi-too-far-dialog {
   border: 1px solid #999;
   border-radius: 4px;
   padding: 1rem 1.25rem;
+  max-width: 24rem;
 }
 
 #labels-dialog div {

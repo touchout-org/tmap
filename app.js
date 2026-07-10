@@ -136,8 +136,22 @@ const labelCheckboxes = {
 const tuningDensityCellSizeInput = document.getElementById('tuning-density-cell-size');
 const tuningDensityThresholdInput = document.getElementById('tuning-density-threshold');
 const tuningCarriagewayMaxSeparationInput = document.getElementById('tuning-carriageway-max-separation');
+const poiListSelect = document.getElementById('poi-list');
+const poiTooFarDialog = document.getElementById('poi-too-far-dialog');
+const poiTooFarMessage = document.getElementById('poi-too-far-message');
+const btnPoiShowAnyway = document.getElementById('btn-poi-show-anyway');
+const btnPoiCancel = document.getElementById('btn-poi-cancel');
 
 let hasAnchor = false;
+
+// § Additional POIs — locations beyond the anchor, each with a triangle
+// marker and an entry in the POI list box. Cleared whenever a new anchor
+// is created (a discarded map takes its POIs with it).
+let additionalPois = []; // { name, lat, lon }
+
+// Holds the pending too-far location while the confirmation dialog is open,
+// so "Show new location" knows what to do (see promptTooFarPoi).
+let pendingFarPoi = null;
 
 // § Screen Layout — Dot Pad connection state. Only one of btn-connect /
 // btn-disconnect is ever visible at a time (see setConnectedState/setDisconnectedState).
@@ -400,8 +414,34 @@ async function runSearch(query) {
 
   const lat = parseFloat(place.lat);
   const lon = parseFloat(place.lon);
-  const bbox = squareBoundingBox(lat, lon, POI_DISTANCE_THRESHOLD_MILES);
+  const displayName = formatPlaceName(place);
 
+  if (!hasAnchor) {
+    await createNewAnchor(displayName, lat, lon);
+    return;
+  }
+
+  // § Additional POIs — a location entered after the anchor exists either
+  // joins the current map (within the POI distance threshold) or requires
+  // discarding it for a new one, depending on distance from the anchor.
+  const { eastFt, northFt } = feetOffsetFrom(lat, lon, lastAnchorLat, lastAnchorLon);
+  const distFt = Math.hypot(eastFt, northFt);
+  const thresholdFt = (POI_DISTANCE_THRESHOLD_MILES * MILES_TO_METERS) / FEET_TO_METERS;
+
+  if (distFt > thresholdFt) {
+    promptTooFarPoi(displayName, lat, lon, distFt);
+    return;
+  }
+
+  addAdditionalPoi(displayName, lat, lon);
+}
+
+// § POIs — fetches and displays a brand-new anchor, discarding whatever map
+// (and additional POIs) may already be showing. Used both for the very
+// first search and for "Show new location" when a later search is too far
+// from the current anchor to fit on the same map.
+async function createNewAnchor(displayName, lat, lon) {
+  const bbox = squareBoundingBox(lat, lon, POI_DISTANCE_THRESHOLD_MILES);
   let ways;
   try {
     ways = await fetchWays(bbox);
@@ -409,9 +449,85 @@ async function runSearch(query) {
     setMessage('Streets failed');
     return;
   }
-
-  const displayName = formatPlaceName(place);
+  additionalPois = [];
+  renderPoiList();
   showAnchor(displayName, lat, lon, bbox, ways);
+}
+
+// § Additional POIs — "The new location is [distance] away from [anchor
+// POI]. That's too far away for a single map." Confirming discards the
+// current map and makes the new location the anchor; cancelling leaves the
+// current map untouched.
+function promptTooFarPoi(displayName, lat, lon, distFt) {
+  pendingFarPoi = { displayName, lat, lon };
+  poiTooFarMessage.textContent =
+    `The new location is ${Math.round(distFt)} ft away from ${lastAnchorName}. ` +
+    `That's too far away for a single map.`;
+  btnPoiShowAnyway.textContent = `Show ${displayName}`;
+  poiTooFarDialog.showModal();
+}
+
+btnPoiShowAnyway.addEventListener('click', () => {
+  poiTooFarDialog.close();
+  const pending = pendingFarPoi;
+  pendingFarPoi = null;
+  if (pending) createNewAnchor(pending.displayName, pending.lat, pending.lon);
+});
+btnPoiCancel.addEventListener('click', () => {
+  poiTooFarDialog.close();
+  pendingFarPoi = null;
+});
+
+// § Additional POIs — adds a triangle-marker POI to the current map, then
+// pans to center it (announcing distance/direction from the anchor, same
+// as an explicit pan).
+function addAdditionalPoi(displayName, lat, lon) {
+  additionalPois.push({ name: displayName, lat, lon });
+  renderPoiList();
+  panToPoint(lat, lon);
+}
+
+function renderPoiList() {
+  poiListSelect.innerHTML = '';
+  additionalPois.forEach((poi, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = poi.name;
+    poiListSelect.appendChild(option);
+  });
+  poiListSelect.disabled = additionalPois.length === 0;
+}
+
+// § Additional POIs — "Selecting an item from the list box (or arrowing
+// through the list) pans to that POI." A multi-row <select> already fires
+// 'change' on every arrow-key move, not just on a committed selection, so
+// this alone covers both interactions.
+poiListSelect.addEventListener('change', () => {
+  const poi = additionalPois[Number(poiListSelect.value)];
+  if (poi) panToPoint(poi.lat, poi.lon);
+});
+
+// Centers the view exactly on (lat, lon) -- used for panning to a POI,
+// as opposed to panMap's fixed-amount directional step. The cursor's own
+// real-world position is left untouched; refreshMap's keepCursorInView
+// shifts the view further if needed to keep it visible, the same as it
+// does after a scale change.
+function panToPoint(lat, lon) {
+  viewportCenterLat = lat;
+  viewportCenterLon = lon;
+  refreshMap();
+  announcePositionRelativeToAnchor();
+}
+
+// § Pan Behavior — "[distance] [direction] of [anchor POI]," shared by an
+// explicit pan and panning to a POI.
+function announcePositionRelativeToAnchor() {
+  const { eastFt, northFt } = feetOffsetFrom(viewportCenterLat, viewportCenterLon, lastAnchorLat, lastAnchorLon);
+  const distFt = Math.round(Math.hypot(eastFt, northFt));
+  const compass = Math.abs(eastFt) > Math.abs(northFt)
+    ? (eastFt >= 0 ? 'East' : 'West')
+    : (northFt >= 0 ? 'North' : 'South');
+  setMessage(distFt === 0 ? `At ${lastAnchorName}` : `${distFt} ft ${compass} of ${lastAnchorName}`);
 }
 
 // § Data ingestion and cleaning pipeline, step 1 (Geocode)
@@ -1081,6 +1197,16 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   marker.setAttribute('r', 4);
   marker.setAttribute('class', 'anchor-poi');
   group.appendChild(marker);
+
+  // § POIs — "Each new POI gets a triangle marker." Sized to roughly match
+  // the anchor's circle marker.
+  for (const poi of additionalPois) {
+    const p = projectToSvg(poi.lat, poi.lon, bbox);
+    const triangle = document.createElementNS(svgNs, 'polygon');
+    triangle.setAttribute('points', `${p.x},${(p.y - 5).toFixed(1)} ${(p.x - 4.3).toFixed(1)},${(p.y + 3).toFixed(1)} ${(p.x + 4.3).toFixed(1)},${(p.y + 3).toFixed(1)}`);
+    triangle.setAttribute('class', 'additional-poi');
+    group.appendChild(triangle);
+  }
 }
 
 // § Map density evaluation and tier-based decluttering — escalating
@@ -1199,7 +1325,26 @@ function currentObjectNames() {
       prev = p;
     }
   }
+
+  // § POIs — POI markers are point objects, hit the same way as a street
+  // vertex: within CURSOR_HIT_RADIUS grid units of the cursor's center.
+  for (const poi of allPois()) {
+    const p = projectToGrid(poi.lat, poi.lon, viewportBbox);
+    if (Math.hypot(cursorGrid.x - p.x, cursorGrid.y - p.y) <= CURSOR_HIT_RADIUS) {
+      names.add(poi.name);
+    }
+  }
+
   return names.size ? Array.from(names).join(' & ') : null;
+}
+
+// § POIs — the anchor plus every additional POI, as a flat list of
+// { name, lat, lon }.
+function allPois() {
+  const pois = [];
+  if (lastAnchorName) pois.push({ name: lastAnchorName, lat: lastAnchorLat, lon: lastAnchorLon });
+  pois.push(...additionalPois);
+  return pois;
 }
 
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
@@ -1309,13 +1454,7 @@ function panMap(direction) {
   viewportCenterLon = newLon;
   carryCursorPastTrailingEdge(direction, latStep, lonStep);
   refreshMap();
-
-  const { eastFt, northFt } = feetOffsetFrom(viewportCenterLat, viewportCenterLon, lastAnchorLat, lastAnchorLon);
-  const distFt = Math.round(Math.hypot(eastFt, northFt));
-  const compass = Math.abs(eastFt) > Math.abs(northFt)
-    ? (eastFt >= 0 ? 'East' : 'West')
-    : (northFt >= 0 ? 'North' : 'South');
-  setMessage(distFt === 0 ? `At ${lastAnchorName}` : `${distFt} ft ${compass} of ${lastAnchorName}`);
+  announcePositionRelativeToAnchor();
 }
 
 // § Scale behavior — steps through SCALE_PRESETS_FT; delta is +1 ("[",
@@ -1493,6 +1632,21 @@ function drawCursorPixels(pixels, w, h, cx, cy) {
   }
 }
 
+// § POIs — a small filled triangle, roughly matching drawFilledCircle's
+// footprint at the anchor's own radius (1), to distinguish additional POIs
+// from the anchor's circle on the tactile display.
+function drawTrianglePixels(pixels, w, h, cx, cy) {
+  cx = Math.round(cx); cy = Math.round(cy);
+  const offsets = [
+    [0, -1],
+    [-1, 0], [0, 0], [1, 0],
+    [-1, 1], [0, 1], [1, 1]
+  ];
+  for (const [dx, dy] of offsets) {
+    setGridPixel(pixels, w, h, cx + dx, cy + dy);
+  }
+}
+
 // Packs a 0/1 pixel buffer into the DotPad SDK's per-cell hex byte format
 // (each braille cell is 2 dots wide x 4 dots tall).
 function packPixelsToHex(pixels, displayW, displayH, numRows) {
@@ -1571,6 +1725,13 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
   const anchor = project(anchorLat, anchorLon);
   if (anchor.x >= rectX && anchor.x <= rectMaxX && anchor.y >= rectY && anchor.y <= rectMaxY) {
     drawFilledCircle(pixels, displayW, displayH, anchor.x, anchor.y, 1);
+  }
+
+  for (const poi of additionalPois) {
+    const p = project(poi.lat, poi.lon);
+    if (p.x >= rectX && p.x <= rectMaxX && p.y >= rectY && p.y <= rectMaxY) {
+      drawTrianglePixels(pixels, displayW, displayH, p.x, p.y);
+    }
   }
 
   if (cursor) {
