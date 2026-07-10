@@ -9,6 +9,45 @@ import {
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 
+// § Local test data cache (dev-only, see test-data/README.md) — set to true
+// while testing locally to serve cached geocode+Overpass data for the
+// addresses below instead of hitting the real Nominatim/Overpass endpoints.
+// Avoids the rate-limit/flakiness these two public instances show under
+// repeated same-session testing (see project notes). MUST be false before
+// every deploy/push -- the dev-cache banner below exists specifically so
+// this is impossible to miss in a screenshot before pushing.
+const USE_LOCAL_TEST_DATA_CACHE = false;
+
+// Maps a normalized ("trim + lowercase") search query to its cached dataset
+// file under test-data/. Add an entry (and a matching file, built the same
+// way as the existing ones -- see test-data/README.md) whenever a new
+// address is needed for repeated local testing.
+const LOCAL_TEST_DATA_FILES = {
+  '2318 fillmore st, san francisco, ca': 'test-data/2318-fillmore-st-san-francisco-ca.json',
+  '1516 hearst ave, berkeley, ca': 'test-data/1516-hearst-ave-berkeley-ca.json',
+  '2000 university ave, berkeley, ca': 'test-data/2000-university-ave-berkeley-ca.json'
+};
+
+// In-memory cache of already-fetched test-data files, so geocode() and
+// fetchWays() (both of which consult the same cached dataset for a given
+// search) don't each trigger their own fetch of the same JSON file.
+const localTestDataCache = new Map();
+
+// Returns { geocode, ways } for a cached query, or null if the cache is off
+// or this query isn't one of the cached addresses (in which case callers
+// fall back to the real network request, same as ever).
+async function loadLocalTestData(query) {
+  if (!USE_LOCAL_TEST_DATA_CACHE || !query) return null;
+  const file = LOCAL_TEST_DATA_FILES[query.trim().toLowerCase()];
+  if (!file) return null;
+  if (localTestDataCache.has(file)) return localTestDataCache.get(file);
+  const res = await fetch(file);
+  if (!res.ok) throw new Error('local-test-data-missing: ' + file);
+  const data = await res.json();
+  localTestDataCache.set(file, data);
+  return data;
+}
+
 // Settings-ready variables (see tmap spec.md § Settings) — not yet exposed in a UI,
 // but kept as named constants rather than inlined so the Settings dialog has a real
 // value to bind to later.
@@ -108,6 +147,7 @@ const CARRIAGEWAY_RESAMPLE_POINTS = 12;
 const CURSOR_HIT_RADIUS = 2;
 
 const browserWarning = document.getElementById('browser-warning');
+const devCacheBanner = document.getElementById('dev-cache-banner');
 const searchForm = document.getElementById('search-form');
 const locationLabel = document.getElementById('location-label');
 const locationInput = document.getElementById('location-input');
@@ -246,6 +286,14 @@ function isChrome() {
 }
 if (!isChrome()) {
   browserWarning.hidden = false;
+}
+
+// § Local test data cache — unmissable visual flag (not just a code
+// comment) that this build is serving cached data instead of hitting the
+// real Nominatim/Overpass endpoints, so it can't accidentally slip into a
+// deploy/push unnoticed.
+if (USE_LOCAL_TEST_DATA_CACHE) {
+  devCacheBanner.hidden = false;
 }
 
 // § Message display architecture — the on-screen field is the single source of
@@ -438,7 +486,7 @@ async function runSearch(query) {
   const shortName = formatShortAddress(place);
 
   if (!hasAnchor) {
-    await createNewAnchor(displayName, shortName, lat, lon);
+    await createNewAnchor(displayName, shortName, lat, lon, query);
     return;
   }
 
@@ -450,7 +498,7 @@ async function runSearch(query) {
   const thresholdFt = (POI_DISTANCE_THRESHOLD_MILES * MILES_TO_METERS) / FEET_TO_METERS;
 
   if (distFt > thresholdFt) {
-    promptTooFarPoi(displayName, shortName, lat, lon, distFt);
+    promptTooFarPoi(displayName, shortName, lat, lon, distFt, query);
     return;
   }
 
@@ -464,11 +512,11 @@ async function runSearch(query) {
 // name) is used only for the on-screen title and heading; shortName (street
 // address only) is what's spoken/brailled everywhere else -- see
 // formatShortAddress.
-async function createNewAnchor(displayName, shortName, lat, lon) {
+async function createNewAnchor(displayName, shortName, lat, lon, query) {
   const bbox = squareBoundingBox(lat, lon, POI_DISTANCE_THRESHOLD_MILES);
   let ways;
   try {
-    ways = await fetchWays(bbox);
+    ways = await fetchWays(bbox, query);
   } catch (err) {
     setMessage('Streets failed');
     return;
@@ -482,8 +530,8 @@ async function createNewAnchor(displayName, shortName, lat, lon) {
 // POI]. That's too far away for a single map." Confirming discards the
 // current map and makes the new location the anchor; cancelling leaves the
 // current map untouched.
-function promptTooFarPoi(displayName, shortName, lat, lon, distFt) {
-  pendingFarPoi = { displayName, shortName, lat, lon };
+function promptTooFarPoi(displayName, shortName, lat, lon, distFt, query) {
+  pendingFarPoi = { displayName, shortName, lat, lon, query };
   poiTooFarMessage.textContent =
     `The new location is ${Math.round(distFt)} ft away from ${lastAnchorName}. ` +
     `That's too far away for a single map.`;
@@ -495,7 +543,7 @@ btnPoiShowAnyway.addEventListener('click', () => {
   poiTooFarDialog.close();
   const pending = pendingFarPoi;
   pendingFarPoi = null;
-  if (pending) createNewAnchor(pending.displayName, pending.shortName, pending.lat, pending.lon);
+  if (pending) createNewAnchor(pending.displayName, pending.shortName, pending.lat, pending.lon, pending.query);
 });
 btnPoiCancel.addEventListener('click', () => {
   poiTooFarDialog.close();
@@ -669,6 +717,9 @@ function announcePositionRelativeToAnchor() {
 
 // § Data ingestion and cleaning pipeline, step 1 (Geocode)
 async function geocode(query) {
+  const cached = await loadLocalTestData(query);
+  if (cached) return cached.geocode;
+
   const url = `${NOMINATIM_URL}?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error('geocode-failed');
@@ -772,12 +823,18 @@ function formatScaleLabel(index) {
   return `1 in = ${SCALE_PRESETS_FT[index]} ft`;
 }
 
-// § Data ingestion and cleaning pipeline, step 2 (Fetch).
-async function fetchWays(bbox) {
-  const query = `[out:json][timeout:25];way["highway"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});out geom;`;
+// § Data ingestion and cleaning pipeline, step 2 (Fetch). searchQuery is the
+// original user-typed search text (not the Overpass QL below) -- passed
+// through purely so this can be matched against the local test data cache,
+// same key geocode() uses for the same search.
+async function fetchWays(bbox, searchQuery) {
+  const cached = await loadLocalTestData(searchQuery);
+  if (cached) return cached.ways;
+
+  const overpassQuery = `[out:json][timeout:25];way["highway"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});out geom;`;
   const res = await fetch(OVERPASS_URL, {
     method: 'POST',
-    body: 'data=' + encodeURIComponent(query)
+    body: 'data=' + encodeURIComponent(overpassQuery)
   });
   if (!res.ok) throw new Error('overpass-failed');
   const data = await res.json();

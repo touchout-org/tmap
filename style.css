@@ -12,6 +12,18 @@ body {
   border-radius: 4px;
 }
 
+/* § Local test data cache — loud on purpose (red, not the browser-warning's
+   amber) so an accidental deploy/push with the cache flag left on is
+   unmissable in any screenshot taken before pushing. */
+#dev-cache-banner {
+  background: #f8d7da;
+  border: 2px solid #c0392b;
+  color: #7a1f1f;
+  font-weight: bold;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+}
+
 #search-form {
   display: flex;
   flex-wrap: wrap;
