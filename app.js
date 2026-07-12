@@ -136,6 +136,38 @@ const PAN_AMOUNT_FRACTION = 0.25;
 // wanted back.
 const PEDESTRIAN_CLASSES = new Set(['footway', 'path', 'cycleway', 'pedestrian', 'steps']);
 
+// § Street importance tiers — brought back for the Edit Map dialog's
+// per-tier bulk toggle (see openEditMapDialog), NOT for automated
+// decluttering -- every way still gets tagged with a tier in processWays,
+// but nothing hides a tier automatically; only an explicit uncheck in the
+// dialog does (see hiddenTiers). An unrecognized highway value (the
+// Overpass query has no class filter, so lifecycle tags like construction/
+// proposed can come through) falls to tier 7 rather than crashing.
+const HIGHWAY_TIERS = {
+  motorway: 1, trunk: 1,
+  primary: 2,
+  secondary: 3,
+  tertiary: 4,
+  unclassified: 5, residential: 5, living_street: 5,
+  service: 6,
+  footway: 7, path: 7, cycleway: 7, pedestrian: 7, steps: 7
+};
+const MAX_TIER = 7;
+
+// Plain-English label for each tier, used as the Edit Map dialog's tier
+// checkbox text (see openEditMapDialog) -- tier 7 is exactly the
+// PEDESTRIAN_CLASSES set, so unchecking it affects the Pedestrian Pathways
+// group the same way unchecking tiers 1-6 affects Streets.
+const TIER_LABELS = {
+  1: 'Tier 1 — Motorways & trunk roads',
+  2: 'Tier 2 — Primary roads',
+  3: 'Tier 3 — Secondary roads',
+  4: 'Tier 4 — Tertiary roads',
+  5: 'Tier 5 — Residential & unclassified roads',
+  6: 'Tier 6 — Service roads (driveways, alleys)',
+  7: 'Tier 7 — Footpaths, cycleways & steps'
+};
+
 // A street "hits" the cursor when it passes within this many grid units of
 // the cursor's center — an approximation of "intersects the cursor's edge"
 // (tmap spec.md § Cursor and hit testing) sized to roughly match the small
@@ -178,6 +210,7 @@ const editMapDialog = document.getElementById('edit-map-dialog');
 const editMapPoisList = document.getElementById('edit-map-pois-list');
 const editMapStreetsList = document.getElementById('edit-map-streets-list');
 const editMapPedestrianList = document.getElementById('edit-map-pedestrian-list');
+const editMapTiersList = document.getElementById('edit-map-tiers-list');
 const btnEditMapSave = document.getElementById('btn-edit-map-save');
 const btnEditMapCancel = document.getElementById('btn-edit-map-cancel');
 
@@ -202,10 +235,10 @@ let currentDevice = null;
 // showing can be synced immediately (see setConnectedState).
 let lastBbox = null;
 // lastRawWays is exactly what Overpass returned; lastWays is
-// processWays(lastRawWays) -- currently just a passthrough (manual-
-// declutter experiment, see git tag `pre-manual-declutter` on main), but
-// kept as a separate step/variable in case a manual cleaning stage is
-// added back here later.
+// processWays(lastRawWays) -- currently just tags each way with its tier
+// (manual-declutter experiment, see git tag `pre-manual-declutter` on main
+// for the dedup/collapse stages that used to also run here), but kept as a
+// separate step/variable in case more gets added back later.
 let lastRawWays = [];
 let lastWays = [];
 let lastAnchorLat = null;
@@ -233,6 +266,15 @@ let labelZones = { top: false, bottom: false, left: false, right: false };
 // same fetched data.
 let hiddenPoiNames = new Set();
 let hiddenStreetNames = new Set();
+
+// § Editing the Map — street-importance tiers (numbers 1-7) the user has
+// unchecked in the Edit Map dialog's Importance Tiers section. Combines
+// with hiddenStreetNames at filter time (see visibleWays()) rather than
+// mutating it, since a single street name can span multiple tiers now that
+// the automated dedup is gone (e.g. a road and a same-named footway) --
+// hiding a tier must not force-hide a name's other, differently-tiered
+// ways too. Reset alongside the name-keyed sets on a brand-new anchor.
+let hiddenTiers = new Set();
 
 // The map's effective drawable region within the fixed DOT_GRID_WIDTH x
 // DOT_GRID_HEIGHT canvas, after carving out whichever label zones are
@@ -632,6 +674,55 @@ function collectUncheckedNames(listContainer) {
   return names;
 }
 
+// § Editing the Map — every street-importance tier actually present in
+// lastWays right now, most to least important -- same "only what's
+// actually on the map" rule as collectStreetFeatureNames.
+function collectPresentTiers() {
+  const tiers = new Set();
+  for (const way of lastWays) {
+    if (way.tier != null) tiers.add(way.tier);
+  }
+  return Array.from(tiers).sort((a, b) => a - b);
+}
+
+// § Editing the Map — same checkbox-per-row pattern as
+// populateEditMapGroup, keyed by tier number with its TIER_LABELS text
+// instead of a feature name.
+function populateEditMapTiers(listContainer, tiers, hiddenTierSet) {
+  listContainer.innerHTML = '';
+  if (tiers.length === 0) {
+    const none = document.createElement('p');
+    none.textContent = '(none)';
+    listContainer.appendChild(none);
+    return;
+  }
+  tiers.forEach((tier, index) => {
+    const id = `edit-map-tier-${index}`;
+    const row = document.createElement('div');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = id;
+    checkbox.checked = !hiddenTierSet.has(tier);
+    checkbox.dataset.tier = String(tier);
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = TIER_LABELS[tier] || `Tier ${tier}`;
+    row.appendChild(checkbox);
+    row.appendChild(label);
+    listContainer.appendChild(row);
+  });
+}
+
+// § Editing the Map — every unchecked tier checkbox's tier number, read
+// back at Save time (mirrors collectUncheckedNames).
+function collectUncheckedTiers(listContainer) {
+  const tiers = new Set();
+  listContainer.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    if (!checkbox.checked) tiers.add(Number(checkbox.dataset.tier));
+  });
+  return tiers;
+}
+
 // § Editing the Map — "a dialog with a list of all features, sorted
 // alphabetically and grouped by POIs, Streets, and Pedestrian Pathways...
 // everything is checked by default." Rebuilt from current map data every
@@ -640,17 +731,19 @@ function collectUncheckedNames(listContainer) {
 function openEditMapDialog() {
   const poiNames = allPois().map((poi) => poi.name).sort((a, b) => a.localeCompare(b));
   const { streets, pedestrian } = collectStreetFeatureNames();
+  const tiers = collectPresentTiers();
   populateEditMapGroup(editMapPoisList, poiNames, hiddenPoiNames, 'edit-map-poi');
   populateEditMapGroup(editMapStreetsList, streets, hiddenStreetNames, 'edit-map-street');
   populateEditMapGroup(editMapPedestrianList, pedestrian, hiddenStreetNames, 'edit-map-pedestrian');
+  populateEditMapTiers(editMapTiersList, tiers, hiddenTiers);
   editMapDialog.showModal();
 }
 
 btnEditMap.addEventListener('click', openEditMapDialog);
 
-// Cancel closes without touching hiddenPoiNames/hiddenStreetNames at all --
-// nothing was ever applied while the dialog was open, so there's nothing to
-// roll back.
+// Cancel closes without touching hiddenPoiNames/hiddenStreetNames/
+// hiddenTiers at all -- nothing was ever applied while the dialog was
+// open, so there's nothing to roll back.
 btnEditMapCancel.addEventListener('click', () => editMapDialog.close());
 
 btnEditMapSave.addEventListener('click', () => {
@@ -658,6 +751,7 @@ btnEditMapSave.addEventListener('click', () => {
   const hiddenStreets = collectUncheckedNames(editMapStreetsList);
   const hiddenPedestrian = collectUncheckedNames(editMapPedestrianList);
   hiddenStreetNames = new Set([...hiddenStreets, ...hiddenPedestrian]);
+  hiddenTiers = collectUncheckedTiers(editMapTiersList);
   editMapDialog.close();
   renderPoiList();
   refreshMap();
@@ -815,15 +909,16 @@ async function fetchWays(bbox, searchQuery) {
 }
 
 // § Data ingestion and cleaning pipeline — the automated roadway/pedestrian
-// dedup, carriageway collapse, and street-importance-tier assignment that
-// used to run here have been removed for a manual-editing experiment (see
-// git tag `pre-manual-declutter` on main for the removed code, and the
-// project's own notes on why -- density decluttering kicked in at different
-// points than wanted in different areas, and the dedup stage was dropping
-// pathways/sidewalks the user actually wanted to keep). This is now a
-// straight passthrough: every named, highway-tagged way Overpass returns is
-// shown, unmodified.
+// dedup and carriageway collapse that used to run here are still removed
+// for the manual-editing experiment (see git tag `pre-manual-declutter` on
+// main for that code, and the project's own notes on why). Tier assignment
+// came back, though: every way still gets tagged with its street-importance
+// tier, but purely as data for the Edit Map dialog's per-tier bulk toggle
+// (see hiddenTiers) -- nothing here hides anything automatically.
 function processWays(rawWays) {
+  for (const way of rawWays) {
+    way.tier = HIGHWAY_TIERS[way.tags && way.tags.highway] || MAX_TIER;
+  }
   return rawWays;
 }
 
@@ -893,6 +988,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   // whatever was hidden on the discarded map doesn't carry over.
   hiddenPoiNames = new Set();
   hiddenStreetNames = new Set();
+  hiddenTiers = new Set();
 
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
@@ -1193,11 +1289,14 @@ function visiblePois() {
   return allPois().filter((poi) => !hiddenPoiNames.has(poi.name));
 }
 
-// § Editing the Map — lastWays minus any street/pathway name the user has
-// unchecked in the dialog. lastWays itself stays unfiltered for the same
-// reason as visiblePois() above.
+// § Editing the Map — lastWays minus any street/pathway name AND minus any
+// whole tier the user has unchecked in the dialog (the two combine as an
+// OR at this single filter point, not by mutating each other's Set --
+// see hiddenTiers for why a name-hide and a tier-hide have to stay
+// independent). lastWays itself stays unfiltered for the same reason as
+// visiblePois() above.
 function visibleWays() {
-  return lastWays.filter((way) => !hiddenStreetNames.has(way.tags && way.tags.name));
+  return lastWays.filter((way) => !hiddenStreetNames.has(way.tags && way.tags.name) && !hiddenTiers.has(way.tier));
 }
 
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
