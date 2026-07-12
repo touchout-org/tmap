@@ -2,7 +2,7 @@ name: Deploy static content to Pages
 
 on:
   push:
-    branches: ["main"]
+    branches: ["experiment/manual-declutter"]
   workflow_dispatch:
 
 permissions:
