@@ -460,6 +460,23 @@ function toggleLabelZone(zone) {
   labelCheckboxes[zone].checked = labelZones[zone];
 }
 
+// § Editing the Map — the 1-7 hotkeys toggle hiddenTiers directly and take
+// effect immediately (same pattern as the label-zone hotkeys above), rather
+// than going through the Edit Map dialog's Save/Cancel flow the way
+// checking/unchecking a tier's checkbox by hand does. If the dialog
+// happens to be open, its checkbox for this tier is kept in sync too --
+// but only that one; any other unsaved checkbox changes in the dialog are
+// untouched.
+function toggleTier(tier) {
+  if (hiddenTiers.has(tier)) hiddenTiers.delete(tier);
+  else hiddenTiers.add(tier);
+  const nowVisible = !hiddenTiers.has(tier);
+  setMessage(`Importance ${tier} ${nowVisible ? 'on' : 'off'}`);
+  refreshMap();
+  const checkbox = editMapTiersList.querySelector(`input[data-tier="${tier}"]`);
+  if (checkbox) checkbox.checked = nowVisible;
+}
+
 
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -1440,6 +1457,17 @@ document.addEventListener('keydown', (event) => {
   }
 
   if (!lastBbox) return;
+
+  // § Editing the Map — 1-7 toggle their matching importance tier on/off,
+  // only once a map is loaded (unlike the label-zone hotkeys above, a tier
+  // toggle has no effect with nothing on screen, and hiddenTiers resets on
+  // the next new anchor anyway).
+  const tierNum = Number(event.key);
+  if (tierNum >= 1 && tierNum <= MAX_TIER && String(tierNum) === event.key) {
+    event.preventDefault();
+    toggleTier(tierNum);
+    return;
+  }
 
   // § Command / hotkey mapping — [ increases scale (zoom out), ] decreases
   // (zoom in).
