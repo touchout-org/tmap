@@ -172,31 +172,6 @@ body {
   margin: 0.2rem 0;
 }
 
-/* § Experimental tuning fields — deliberately plain, dev-only surface, not
-   styled like the polished Settings dialog it may eventually fold into. */
-#tuning-fields {
-  border: 1px dashed #c9922a;
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
-}
-
-#tuning-fields legend {
-  color: #8a5a00;
-  font-size: 0.85rem;
-}
-
-#tuning-fields div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin: 0.3rem 0;
-}
-
-#tuning-fields input {
-  width: 6rem;
-}
-
 #message-display {
   margin-top: 0.5rem;
   min-height: 1.4em;
