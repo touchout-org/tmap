@@ -129,18 +129,9 @@ const DOT_PAD_DISPLAY_WIDTH_INCHES = 6 + 3 / 16;
 // width/height (no Settings dialog yet, so this is the only value in use).
 const PAN_AMOUNT_FRACTION = 0.25;
 
-// § Editing the Map — still used to classify a street name into "Streets"
-// vs. "Pedestrian Pathways" in the Edit Map dialog. Unrelated to the
-// automated dedup/decluttering pipeline that used to live in this file --
-// see git tag `pre-manual-declutter` on main for that code, if it's ever
-// wanted back.
-const PEDESTRIAN_CLASSES = new Set(['footway', 'path', 'cycleway', 'pedestrian', 'steps']);
-
-// § Street importance tiers — brought back for the Edit Map dialog's
-// per-tier bulk toggle (see openEditMapDialog), NOT for automated
-// decluttering -- every way still gets tagged with a tier in processWays,
-// but nothing hides a tier automatically; only an explicit uncheck in the
-// dialog does (see hiddenTiers). An unrecognized highway value (the
+// § Street importance tiers — every way gets tagged with a tier in
+// processWays, purely as data for the Map Complexity filter (see
+// MAP_COMPLEXITY_LEVELS/visibleWays). An unrecognized highway value (the
 // Overpass query has no class filter, so lifecycle tags like construction/
 // proposed can come through) falls to tier 7 rather than crashing.
 const HIGHWAY_TIERS = {
@@ -154,19 +145,18 @@ const HIGHWAY_TIERS = {
 };
 const MAX_TIER = 7;
 
-// Plain-English label for each tier, used as the Edit Map dialog's tier
-// checkbox text (see openEditMapDialog) -- tier 7 is exactly the
-// PEDESTRIAN_CLASSES set, so unchecking it affects the Pedestrian Pathways
-// group the same way unchecking tiers 1-6 affects Streets.
-const TIER_LABELS = {
-  1: 'Tier 1 — Motorways & trunk roads',
-  2: 'Tier 2 — Primary roads',
-  3: 'Tier 3 — Secondary roads',
-  4: 'Tier 4 — Tertiary roads',
-  5: 'Tier 5 — Residential & unclassified roads',
-  6: 'Tier 6 — Service roads (driveways, alleys)',
-  7: 'Tier 7 — Footpaths, cycleways & steps'
-};
+// § Editing the Map — Map Complexity radio options, most to least detail.
+// Each level is a maxTier cutoff (a way is visible only if its tier is <=
+// maxTier) -- a strict nested ladder (highways ⊂ major ⊂ simplified ⊂ all),
+// not independent per-tier toggles. Index in this array doubles as the
+// 1-4 hotkey mapping (see the keydown handler) and the Edit Map dialog's
+// radio button order.
+const MAP_COMPLEXITY_LEVELS = [
+  { label: 'All streets and pathways', maxTier: MAX_TIER },
+  { label: 'Simplified neighborhoods', maxTier: 5 },
+  { label: 'Major streets', maxTier: 4 },
+  { label: 'Major highways', maxTier: 1 }
+];
 
 // A street "hits" the cursor when it passes within this many grid units of
 // the cursor's center — an approximation of "intersects the cursor's edge"
@@ -208,11 +198,10 @@ const btnPoiCancel = document.getElementById('btn-poi-cancel');
 const btnEditMap = document.getElementById('btn-edit-map');
 const editMapDialog = document.getElementById('edit-map-dialog');
 const editMapPoisList = document.getElementById('edit-map-pois-list');
-const editMapStreetsList = document.getElementById('edit-map-streets-list');
-const editMapPedestrianList = document.getElementById('edit-map-pedestrian-list');
-const editMapTiersList = document.getElementById('edit-map-tiers-list');
-const btnEditMapSave = document.getElementById('btn-edit-map-save');
-const btnEditMapCancel = document.getElementById('btn-edit-map-cancel');
+const editMapVisibleStreetsList = document.getElementById('edit-map-visible-streets-list');
+const editMapHiddenStreetsList = document.getElementById('edit-map-hidden-streets-list');
+const editMapComplexityList = document.getElementById('edit-map-complexity-list');
+const btnEditMapClose = document.getElementById('btn-edit-map-close');
 
 let hasAnchor = false;
 
@@ -258,34 +247,25 @@ let scaleIndex = DEFAULT_SCALE_INDEX;
 let labelZones = { top: false, bottom: false, left: false, right: false };
 
 // § Editing the Map — names of POIs/streets the user has unchecked in the
-// Edit Map dialog. Hidden features stay in additionalPois/lastWays (and in
-// the dialog's own list, so they can be turned back on) but are skipped by
-// rendering, hit-testing, and the tactile raster -- see visiblePois() /
+// Edit Map dialog (Streets and Pedestrian Pathways are merged into one
+// name-keyed set now that the dialog no longer classifies by way class).
+// Hidden features stay in additionalPois/lastWays (and in the dialog's own
+// Hidden Streets/POIs list, so they can be turned back on) but are skipped
+// by rendering, hit-testing, and the tactile raster -- see visiblePois() /
 // visibleWays(). Reset whenever a brand-new anchor discards the old map
-// (see showAnchor); untouched by pan/scale/tuning changes, which reuse the
-// same fetched data.
+// (see showAnchor); untouched by pan/scale/complexity changes, which reuse
+// the same fetched data. Every change here takes effect immediately (the
+// Edit Map dialog has no Save/Cancel staging step) and refreshes the map.
 let hiddenPoiNames = new Set();
 let hiddenStreetNames = new Set();
 
-// § Editing the Map — street-importance tiers (numbers 1-7) the user has
-// unchecked in the Edit Map dialog's Importance Tiers section. Combines
-// with hiddenStreetNames at filter time (see visibleWays()) rather than
-// mutating it, since a single street name can span multiple tiers now that
-// the automated dedup is gone (e.g. a road and a same-named footway) --
-// hiding a tier must not force-hide a name's other, differently-tiered
-// ways too. Reset alongside the name-keyed sets on a brand-new anchor.
-let hiddenTiers = new Set();
-
-// § Editing the Map — when true, hides every way flagged redundantSidewalk
-// by processWays (a tier 6/7 way whose name exactly matches some tier 1-5
-// way's name anywhere in the fetch box). This is the old automated
-// roadway/pedestrian dedup's rule, reintroduced as a toggle-able hide (via
-// the Edit Map dialog's "Redundant sidewalks" checkbox and the 8 hotkey)
-// instead of the original hard delete, so a wrongly-hidden sidewalk can
-// just be turned back on. Combines with hiddenTiers/hiddenStreetNames via
-// the same OR logic in visibleWays(). Reset alongside them on a brand-new
-// anchor.
-let hideRedundantSidewalks = false;
+// § Editing the Map — index into MAP_COMPLEXITY_LEVELS for the Map
+// Complexity radio group's current selection. Independent of
+// hiddenStreetNames -- a manually-hidden street stays hidden regardless of
+// complexity level, and changing complexity never touches hiddenStreetNames
+// (see visibleWays(), which ANDs both filters). Reset to 0 ("All streets
+// and pathways") on a brand-new anchor.
+let mapComplexityIndex = 0;
 
 // The map's effective drawable region within the fixed DOT_GRID_WIDTH x
 // DOT_GRID_HEIGHT canvas, after carving out whichever label zones are
@@ -471,33 +451,19 @@ function toggleLabelZone(zone) {
   labelCheckboxes[zone].checked = labelZones[zone];
 }
 
-// § Editing the Map — the 1-7 hotkeys toggle hiddenTiers directly and take
-// effect immediately (same pattern as the label-zone hotkeys above), rather
-// than going through the Edit Map dialog's Save/Cancel flow the way
-// checking/unchecking a tier's checkbox by hand does. If the dialog
-// happens to be open, its checkbox for this tier is kept in sync too --
-// but only that one; any other unsaved checkbox changes in the dialog are
-// untouched.
-function toggleTier(tier) {
-  if (hiddenTiers.has(tier)) hiddenTiers.delete(tier);
-  else hiddenTiers.add(tier);
-  const nowVisible = !hiddenTiers.has(tier);
-  setMessage(`Importance ${tier} ${nowVisible ? 'on' : 'off'}`);
+// § Editing the Map — sets Map Complexity to the given MAP_COMPLEXITY_LEVELS
+// index, whether triggered by the 1-4 hotkeys or by picking the radio
+// button directly in the Edit Map dialog -- both go through this one
+// function so the message field always announces the change (per the
+// Message display architecture) and the dialog's own radio stays in sync
+// no matter which path triggered it.
+function setMapComplexity(index) {
+  if (index === mapComplexityIndex) return;
+  mapComplexityIndex = index;
+  setMessage(`Map complexity: ${MAP_COMPLEXITY_LEVELS[index].label}`);
   refreshMap();
-  const checkbox = editMapTiersList.querySelector(`input[data-tier="${tier}"]`);
-  if (checkbox) checkbox.checked = nowVisible;
-}
-
-// § Editing the Map — the 8 hotkey toggles hideRedundantSidewalks the same
-// way 1-7 toggle a tier: takes effect immediately, and keeps the dialog's
-// own checkbox in sync if it happens to be open.
-function toggleRedundantSidewalks() {
-  hideRedundantSidewalks = !hideRedundantSidewalks;
-  const nowVisible = !hideRedundantSidewalks;
-  setMessage(`Redundant sidewalks ${nowVisible ? 'on' : 'off'}`);
-  refreshMap();
-  const checkbox = editMapTiersList.querySelector('#edit-map-redundant-sidewalks');
-  if (checkbox) checkbox.checked = nowVisible;
+  const radio = editMapComplexityList.querySelector(`input[value="${index}"]`);
+  if (radio) radio.checked = true;
 }
 
 
@@ -650,35 +616,24 @@ poiListSelect.addEventListener('change', () => {
 
 // § Editing the Map — every street/pathway name currently in lastWays
 // (regardless of hidden state -- the dialog must still list a hidden
-// feature so it can be turned back on), split into Streets vs Pedestrian
-// Pathways by each individual way's own class. NOTE (manual-declutter
-// experiment): this classifies per-way, not per-name, so since the
-// automated dedup that used to guarantee "one name = one class" has been
-// removed, a name whose ways span both a roadway and a sidewalk now shows
-// up as a checkbox in *both* groups -- and because hiddenStreetNames is
-// keyed by name alone, checking/unchecking either one hides/shows every
-// way with that name, road and sidewalk together. Not fixed here; flagging
-// for whenever manual per-segment control is built.
-function collectStreetFeatureNames() {
-  const streets = new Set();
-  const pedestrian = new Set();
+// feature so it can be turned back on), merged into one alphabetical list
+// regardless of way class. The old Streets/Pedestrian Pathways split
+// (classified per-way, not per-name) is gone along with its sync quirk --
+// Visible/Hidden Streets are both keyed by name alone now, same as
+// hiddenStreetNames itself.
+function collectStreetNames() {
+  const names = new Set();
   for (const way of lastWays) {
     const name = way.tags && way.tags.name;
-    if (!name) continue;
-    const highway = way.tags && way.tags.highway;
-    if (PEDESTRIAN_CLASSES.has(highway)) pedestrian.add(name);
-    else streets.add(name);
+    if (name) names.add(name);
   }
-  return {
-    streets: Array.from(streets).sort((a, b) => a.localeCompare(b)),
-    pedestrian: Array.from(pedestrian).sort((a, b) => a.localeCompare(b))
-  };
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
 // § Editing the Map — fills one group's list with a checkbox per feature
 // name, checked unless the name is in hiddenNames. Each checkbox carries
-// its feature name in a data attribute so Save can read it back without
-// needing a parallel index.
+// its feature name in a data attribute so a change handler can read it
+// back without needing a parallel index.
 function populateEditMapGroup(listContainer, names, hiddenNames, idPrefix) {
   listContainer.innerHTML = '';
   if (names.length === 0) {
@@ -704,126 +659,114 @@ function populateEditMapGroup(listContainer, names, hiddenNames, idPrefix) {
   });
 }
 
-// § Editing the Map — every unchecked checkbox's feature name, read back
-// out of a populated group at Save time.
-function collectUncheckedNames(listContainer) {
-  const names = new Set();
-  listContainer.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
-    if (!checkbox.checked) names.add(checkbox.dataset.name);
-  });
-  return names;
+// § Editing the Map — (re)renders both Streets groups from hiddenStreetNames
+// -- a name lives in exactly one of the two lists at a time, never both.
+// Called on dialog open and after every toggle, so unchecking a name in
+// Visible Streets makes it reappear checked in Hidden Streets (and vice
+// versa) immediately, not just on next open.
+function renderStreetLists() {
+  const allNames = collectStreetNames();
+  const visible = allNames.filter((name) => !hiddenStreetNames.has(name));
+  const hidden = allNames.filter((name) => hiddenStreetNames.has(name));
+  populateEditMapGroup(editMapVisibleStreetsList, visible, hiddenStreetNames, 'edit-map-visible-street');
+  populateEditMapGroup(editMapHiddenStreetsList, hidden, hiddenStreetNames, 'edit-map-hidden-street');
 }
 
-// § Editing the Map — every street-importance tier actually present in
-// lastWays right now, most to least important -- same "only what's
-// actually on the map" rule as collectStreetFeatureNames.
-function collectPresentTiers() {
-  const tiers = new Set();
-  for (const way of lastWays) {
-    if (way.tier != null) tiers.add(way.tier);
+// § Editing the Map — finds a street's checkbox wherever it currently
+// lives (Visible or Hidden Streets), used to restore focus to a checkbox
+// after it relocates between the two lists on toggle.
+function findStreetCheckboxByName(name) {
+  for (const list of [editMapVisibleStreetsList, editMapHiddenStreetsList]) {
+    const match = [...list.querySelectorAll('input[type="checkbox"]')].find((cb) => cb.dataset.name === name);
+    if (match) return match;
   }
-  return Array.from(tiers).sort((a, b) => a - b);
+  return null;
 }
 
-// § Editing the Map — same checkbox-per-row pattern as
-// populateEditMapGroup, keyed by tier number with its TIER_LABELS text
-// instead of a feature name. Also appends one extra "Redundant sidewalks"
-// row (see hideRedundantSidewalks) when at least one way currently on the
-// map is flagged redundantSidewalk -- same "only what's actually on the
-// map" rule as the numbered tiers.
-function populateEditMapTiers(listContainer, tiers, hiddenTierSet) {
+// § Editing the Map — a Visible/Hidden Streets checkbox takes effect the
+// instant it's toggled (no Save/Cancel step): updates hiddenStreetNames,
+// re-renders both lists so the row visibly moves to the other group, then
+// moves focus to the checkbox's new location so a screen reader user's
+// focus follows the item rather than landing on whatever now happens to
+// occupy its old DOM position.
+function handleStreetCheckboxChange(event) {
+  const checkbox = event.target;
+  if (!checkbox.matches('input[type="checkbox"]')) return;
+  const name = checkbox.dataset.name;
+  const nowVisible = checkbox.checked;
+  if (nowVisible) hiddenStreetNames.delete(name);
+  else hiddenStreetNames.add(name);
+  renderStreetLists();
+  refreshMap();
+  setMessage(`${name} ${nowVisible ? 'shown' : 'hidden'}`);
+  const moved = findStreetCheckboxByName(name);
+  if (moved) moved.focus();
+}
+
+editMapVisibleStreetsList.addEventListener('change', handleStreetCheckboxChange);
+editMapHiddenStreetsList.addEventListener('change', handleStreetCheckboxChange);
+
+// § Editing the Map — a POI checkbox stays in the same list either way (no
+// relocation, unlike Streets), so it just needs its own state updated and
+// the map/POI dropdown refreshed -- no re-render of the list itself.
+function handlePoiCheckboxChange(event) {
+  const checkbox = event.target;
+  if (!checkbox.matches('input[type="checkbox"]')) return;
+  const name = checkbox.dataset.name;
+  if (checkbox.checked) hiddenPoiNames.delete(name);
+  else hiddenPoiNames.add(name);
+  renderPoiList();
+  refreshMap();
+  setMessage(`${name} ${checkbox.checked ? 'shown' : 'hidden'}`);
+}
+
+editMapPoisList.addEventListener('change', handlePoiCheckboxChange);
+
+// § Editing the Map — Map Complexity radio group, one row per
+// MAP_COMPLEXITY_LEVELS entry (see setMapComplexity for what picking one
+// does).
+function populateEditMapComplexity(listContainer) {
   listContainer.innerHTML = '';
-  const hasRedundantSidewalks = lastWays.some((way) => way.redundantSidewalk);
-  if (tiers.length === 0 && !hasRedundantSidewalks) {
-    const none = document.createElement('p');
-    none.textContent = '(none)';
-    listContainer.appendChild(none);
-    return;
-  }
-  tiers.forEach((tier, index) => {
-    const id = `edit-map-tier-${index}`;
+  MAP_COMPLEXITY_LEVELS.forEach((level, index) => {
+    const id = `edit-map-complexity-${index}`;
     const row = document.createElement('div');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.id = id;
-    checkbox.checked = !hiddenTierSet.has(tier);
-    checkbox.dataset.tier = String(tier);
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'map-complexity';
+    radio.id = id;
+    radio.value = String(index);
+    radio.checked = index === mapComplexityIndex;
     const label = document.createElement('label');
     label.htmlFor = id;
-    label.textContent = TIER_LABELS[tier] || `Tier ${tier}`;
-    row.appendChild(checkbox);
+    label.textContent = level.label;
+    row.appendChild(radio);
     row.appendChild(label);
     listContainer.appendChild(row);
   });
-  if (hasRedundantSidewalks) {
-    const row = document.createElement('div');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.id = 'edit-map-redundant-sidewalks';
-    checkbox.checked = !hideRedundantSidewalks;
-    const label = document.createElement('label');
-    label.htmlFor = checkbox.id;
-    label.textContent = 'Redundant sidewalks';
-    row.appendChild(checkbox);
-    row.appendChild(label);
-    listContainer.appendChild(row);
-  }
 }
 
-// § Editing the Map — every unchecked tier checkbox's tier number, read
-// back at Save time (mirrors collectUncheckedNames). Ignores the
-// Redundant sidewalks checkbox (no data-tier attribute) -- that one is
-// read separately, see collectRedundantSidewalksHidden.
-function collectUncheckedTiers(listContainer) {
-  const tiers = new Set();
-  listContainer.querySelectorAll('input[type="checkbox"][data-tier]').forEach((checkbox) => {
-    if (!checkbox.checked) tiers.add(Number(checkbox.dataset.tier));
-  });
-  return tiers;
-}
+editMapComplexityList.addEventListener('change', (event) => {
+  const radio = event.target;
+  if (!radio.matches('input[type="radio"]')) return;
+  setMapComplexity(Number(radio.value));
+});
 
-// § Editing the Map — reads the Redundant sidewalks checkbox back at Save
-// time. Defaults to false (visible/unhidden) if the checkbox wasn't
-// rendered this time around (no redundant-sidewalk ways on the map).
-function collectRedundantSidewalksHidden(listContainer) {
-  const checkbox = listContainer.querySelector('#edit-map-redundant-sidewalks');
-  return checkbox ? !checkbox.checked : false;
-}
-
-// § Editing the Map — "a dialog with a list of all features, sorted
-// alphabetically and grouped by POIs, Streets, and Pedestrian Pathways...
-// everything is checked by default." Rebuilt from current map data every
-// time the dialog opens, so it always reflects whatever's actually on the
-// map (including features added since the dialog was last open).
+// § Editing the Map — rebuilt from current map data every time the dialog
+// opens, so it always reflects whatever's actually on the map (including
+// features added since the dialog was last open). No Save/Cancel step --
+// every checkbox/radio here applies immediately (see handleStreetCheckbox
+// Change, handlePoiCheckboxChange, setMapComplexity).
 function openEditMapDialog() {
   const poiNames = allPois().map((poi) => poi.name).sort((a, b) => a.localeCompare(b));
-  const { streets, pedestrian } = collectStreetFeatureNames();
-  const tiers = collectPresentTiers();
   populateEditMapGroup(editMapPoisList, poiNames, hiddenPoiNames, 'edit-map-poi');
-  populateEditMapGroup(editMapStreetsList, streets, hiddenStreetNames, 'edit-map-street');
-  populateEditMapGroup(editMapPedestrianList, pedestrian, hiddenStreetNames, 'edit-map-pedestrian');
-  populateEditMapTiers(editMapTiersList, tiers, hiddenTiers);
+  renderStreetLists();
+  populateEditMapComplexity(editMapComplexityList);
   editMapDialog.showModal();
 }
 
 btnEditMap.addEventListener('click', openEditMapDialog);
 
-// Cancel closes without touching hiddenPoiNames/hiddenStreetNames/
-// hiddenTiers at all -- nothing was ever applied while the dialog was
-// open, so there's nothing to roll back.
-btnEditMapCancel.addEventListener('click', () => editMapDialog.close());
-
-btnEditMapSave.addEventListener('click', () => {
-  hiddenPoiNames = collectUncheckedNames(editMapPoisList);
-  const hiddenStreets = collectUncheckedNames(editMapStreetsList);
-  const hiddenPedestrian = collectUncheckedNames(editMapPedestrianList);
-  hiddenStreetNames = new Set([...hiddenStreets, ...hiddenPedestrian]);
-  hiddenTiers = collectUncheckedTiers(editMapTiersList);
-  hideRedundantSidewalks = collectRedundantSidewalksHidden(editMapTiersList);
-  editMapDialog.close();
-  renderPoiList();
-  refreshMap();
-});
+btnEditMapClose.addEventListener('click', () => editMapDialog.close());
 
 // Centers the view exactly on (lat, lon) and moves the cursor there too --
 // used for panning to a POI (newly added, or selected from the list), as
@@ -979,30 +922,16 @@ async function fetchWays(bbox, searchQuery) {
 // § Data ingestion and cleaning pipeline — the automated roadway/pedestrian
 // dedup and carriageway collapse that used to run here are still removed
 // for the manual-editing experiment (see git tag `pre-manual-declutter` on
-// main for that code, and the project's own notes on why). Tier assignment
-// came back, though: every way still gets tagged with its street-importance
-// tier, but purely as data for the Edit Map dialog's per-tier bulk toggle
-// (see hiddenTiers) -- nothing here hides anything automatically.
-//
-// redundantSidewalk is the same idea, one level more specific: a tier 6
-// (service) or tier 7 (footway/path/cycleway/pedestrian/steps) way whose
-// name exactly matches some tier 1-5 way's name anywhere in this fetch box
-// -- the old automated roadway/pedestrian dedup's rule, restored as a data
-// flag rather than an automatic drop, so the Edit Map dialog's "Redundant
-// sidewalks" checkbox (see hideRedundantSidewalks) can hide/show them as a
-// group, reversibly.
+// main for that code, and the project's own notes on why; a later,
+// name-match-based "Redundant sidewalks" filter was also tried and retired
+// -- see git history around commit `7324c55` if it's ever wanted back).
+// Tier assignment came back, though: every way still gets tagged with its
+// street-importance tier, purely as data for the Map Complexity filter (see
+// MAP_COMPLEXITY_LEVELS/visibleWays) -- nothing here hides anything
+// automatically.
 function processWays(rawWays) {
   for (const way of rawWays) {
     way.tier = HIGHWAY_TIERS[way.tags && way.tags.highway] || MAX_TIER;
-  }
-  const namesWithLowTier = new Set();
-  for (const way of rawWays) {
-    const name = way.tags && way.tags.name;
-    if (name && way.tier <= 5) namesWithLowTier.add(name);
-  }
-  for (const way of rawWays) {
-    const name = way.tags && way.tags.name;
-    way.redundantSidewalk = way.tier >= 6 && name != null && namesWithLowTier.has(name);
   }
   return rawWays;
 }
@@ -1073,8 +1002,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   // whatever was hidden on the discarded map doesn't carry over.
   hiddenPoiNames = new Set();
   hiddenStreetNames = new Set();
-  hiddenTiers = new Set();
-  hideRedundantSidewalks = false;
+  mapComplexityIndex = 0;
 
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
@@ -1375,17 +1303,17 @@ function visiblePois() {
   return allPois().filter((poi) => !hiddenPoiNames.has(poi.name));
 }
 
-// § Editing the Map — lastWays minus any street/pathway name AND minus any
-// whole tier the user has unchecked in the dialog (the two combine as an
-// OR at this single filter point, not by mutating each other's Set --
-// see hiddenTiers for why a name-hide and a tier-hide have to stay
-// independent). lastWays itself stays unfiltered for the same reason as
-// visiblePois() above.
+// § Editing the Map — lastWays minus any manually-hidden street/pathway
+// name, ANDed with the current Map Complexity cutoff (mapComplexityIndex).
+// These are two independent filters, not one merged set: a manually-hidden
+// street stays hidden at every complexity level, and raising/lowering
+// complexity never touches hiddenStreetNames. lastWays itself stays
+// unfiltered for the same reason as visiblePois() above.
 function visibleWays() {
+  const maxTier = MAP_COMPLEXITY_LEVELS[mapComplexityIndex].maxTier;
   return lastWays.filter((way) =>
     !hiddenStreetNames.has(way.tags && way.tags.name) &&
-    !hiddenTiers.has(way.tier) &&
-    !(hideRedundantSidewalks && way.redundantSidewalk)
+    way.tier <= maxTier
   );
 }
 
@@ -1531,22 +1459,15 @@ document.addEventListener('keydown', (event) => {
 
   if (!lastBbox) return;
 
-  // § Editing the Map — 1-7 toggle their matching importance tier on/off,
-  // only once a map is loaded (unlike the label-zone hotkeys above, a tier
-  // toggle has no effect with nothing on screen, and hiddenTiers resets on
+  // § Editing the Map — 1-4 jump straight to the matching Map Complexity
+  // level (1 = All streets and pathways, 4 = Major highways), only once a
+  // map is loaded (unlike the label-zone hotkeys above, a complexity change
+  // has no effect with nothing on screen, and mapComplexityIndex resets on
   // the next new anchor anyway).
-  const tierNum = Number(event.key);
-  if (tierNum >= 1 && tierNum <= MAX_TIER && String(tierNum) === event.key) {
+  const complexityNum = Number(event.key);
+  if (complexityNum >= 1 && complexityNum <= MAP_COMPLEXITY_LEVELS.length && String(complexityNum) === event.key) {
     event.preventDefault();
-    toggleTier(tierNum);
-    return;
-  }
-
-  // § Editing the Map — 8 toggles Redundant sidewalks on/off, same
-  // immediate-effect pattern as 1-7 above.
-  if (event.key === '8') {
-    event.preventDefault();
-    toggleRedundantSidewalks();
+    setMapComplexity(complexityNum - 1);
     return;
   }
 
