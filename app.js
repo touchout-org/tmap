@@ -276,6 +276,17 @@ let hiddenStreetNames = new Set();
 // ways too. Reset alongside the name-keyed sets on a brand-new anchor.
 let hiddenTiers = new Set();
 
+// § Editing the Map — when true, hides every way flagged redundantSidewalk
+// by processWays (a tier 6/7 way whose name exactly matches some tier 1-5
+// way's name anywhere in the fetch box). This is the old automated
+// roadway/pedestrian dedup's rule, reintroduced as a toggle-able hide (via
+// the Edit Map dialog's "Redundant sidewalks" checkbox and the 8 hotkey)
+// instead of the original hard delete, so a wrongly-hidden sidewalk can
+// just be turned back on. Combines with hiddenTiers/hiddenStreetNames via
+// the same OR logic in visibleWays(). Reset alongside them on a brand-new
+// anchor.
+let hideRedundantSidewalks = false;
+
 // The map's effective drawable region within the fixed DOT_GRID_WIDTH x
 // DOT_GRID_HEIGHT canvas, after carving out whichever label zones are
 // active. All grid/SVG/device projections for streets, cursor, and hit
@@ -474,6 +485,18 @@ function toggleTier(tier) {
   setMessage(`Importance ${tier} ${nowVisible ? 'on' : 'off'}`);
   refreshMap();
   const checkbox = editMapTiersList.querySelector(`input[data-tier="${tier}"]`);
+  if (checkbox) checkbox.checked = nowVisible;
+}
+
+// § Editing the Map — the 8 hotkey toggles hideRedundantSidewalks the same
+// way 1-7 toggle a tier: takes effect immediately, and keeps the dialog's
+// own checkbox in sync if it happens to be open.
+function toggleRedundantSidewalks() {
+  hideRedundantSidewalks = !hideRedundantSidewalks;
+  const nowVisible = !hideRedundantSidewalks;
+  setMessage(`Redundant sidewalks ${nowVisible ? 'on' : 'off'}`);
+  refreshMap();
+  const checkbox = editMapTiersList.querySelector('#edit-map-redundant-sidewalks');
   if (checkbox) checkbox.checked = nowVisible;
 }
 
@@ -704,10 +727,14 @@ function collectPresentTiers() {
 
 // § Editing the Map — same checkbox-per-row pattern as
 // populateEditMapGroup, keyed by tier number with its TIER_LABELS text
-// instead of a feature name.
+// instead of a feature name. Also appends one extra "Redundant sidewalks"
+// row (see hideRedundantSidewalks) when at least one way currently on the
+// map is flagged redundantSidewalk -- same "only what's actually on the
+// map" rule as the numbered tiers.
 function populateEditMapTiers(listContainer, tiers, hiddenTierSet) {
   listContainer.innerHTML = '';
-  if (tiers.length === 0) {
+  const hasRedundantSidewalks = lastWays.some((way) => way.redundantSidewalk);
+  if (tiers.length === 0 && !hasRedundantSidewalks) {
     const none = document.createElement('p');
     none.textContent = '(none)';
     listContainer.appendChild(none);
@@ -728,16 +755,39 @@ function populateEditMapTiers(listContainer, tiers, hiddenTierSet) {
     row.appendChild(label);
     listContainer.appendChild(row);
   });
+  if (hasRedundantSidewalks) {
+    const row = document.createElement('div');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = 'edit-map-redundant-sidewalks';
+    checkbox.checked = !hideRedundantSidewalks;
+    const label = document.createElement('label');
+    label.htmlFor = checkbox.id;
+    label.textContent = 'Redundant sidewalks';
+    row.appendChild(checkbox);
+    row.appendChild(label);
+    listContainer.appendChild(row);
+  }
 }
 
 // § Editing the Map — every unchecked tier checkbox's tier number, read
-// back at Save time (mirrors collectUncheckedNames).
+// back at Save time (mirrors collectUncheckedNames). Ignores the
+// Redundant sidewalks checkbox (no data-tier attribute) -- that one is
+// read separately, see collectRedundantSidewalksHidden.
 function collectUncheckedTiers(listContainer) {
   const tiers = new Set();
-  listContainer.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+  listContainer.querySelectorAll('input[type="checkbox"][data-tier]').forEach((checkbox) => {
     if (!checkbox.checked) tiers.add(Number(checkbox.dataset.tier));
   });
   return tiers;
+}
+
+// § Editing the Map — reads the Redundant sidewalks checkbox back at Save
+// time. Defaults to false (visible/unhidden) if the checkbox wasn't
+// rendered this time around (no redundant-sidewalk ways on the map).
+function collectRedundantSidewalksHidden(listContainer) {
+  const checkbox = listContainer.querySelector('#edit-map-redundant-sidewalks');
+  return checkbox ? !checkbox.checked : false;
 }
 
 // § Editing the Map — "a dialog with a list of all features, sorted
@@ -769,6 +819,7 @@ btnEditMapSave.addEventListener('click', () => {
   const hiddenPedestrian = collectUncheckedNames(editMapPedestrianList);
   hiddenStreetNames = new Set([...hiddenStreets, ...hiddenPedestrian]);
   hiddenTiers = collectUncheckedTiers(editMapTiersList);
+  hideRedundantSidewalks = collectRedundantSidewalksHidden(editMapTiersList);
   editMapDialog.close();
   renderPoiList();
   refreshMap();
@@ -932,9 +983,26 @@ async function fetchWays(bbox, searchQuery) {
 // came back, though: every way still gets tagged with its street-importance
 // tier, but purely as data for the Edit Map dialog's per-tier bulk toggle
 // (see hiddenTiers) -- nothing here hides anything automatically.
+//
+// redundantSidewalk is the same idea, one level more specific: a tier 6
+// (service) or tier 7 (footway/path/cycleway/pedestrian/steps) way whose
+// name exactly matches some tier 1-5 way's name anywhere in this fetch box
+// -- the old automated roadway/pedestrian dedup's rule, restored as a data
+// flag rather than an automatic drop, so the Edit Map dialog's "Redundant
+// sidewalks" checkbox (see hideRedundantSidewalks) can hide/show them as a
+// group, reversibly.
 function processWays(rawWays) {
   for (const way of rawWays) {
     way.tier = HIGHWAY_TIERS[way.tags && way.tags.highway] || MAX_TIER;
+  }
+  const namesWithLowTier = new Set();
+  for (const way of rawWays) {
+    const name = way.tags && way.tags.name;
+    if (name && way.tier <= 5) namesWithLowTier.add(name);
+  }
+  for (const way of rawWays) {
+    const name = way.tags && way.tags.name;
+    way.redundantSidewalk = way.tier >= 6 && name != null && namesWithLowTier.has(name);
   }
   return rawWays;
 }
@@ -1006,6 +1074,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   hiddenPoiNames = new Set();
   hiddenStreetNames = new Set();
   hiddenTiers = new Set();
+  hideRedundantSidewalks = false;
 
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
@@ -1313,7 +1382,11 @@ function visiblePois() {
 // independent). lastWays itself stays unfiltered for the same reason as
 // visiblePois() above.
 function visibleWays() {
-  return lastWays.filter((way) => !hiddenStreetNames.has(way.tags && way.tags.name) && !hiddenTiers.has(way.tier));
+  return lastWays.filter((way) =>
+    !hiddenStreetNames.has(way.tags && way.tags.name) &&
+    !hiddenTiers.has(way.tier) &&
+    !(hideRedundantSidewalks && way.redundantSidewalk)
+  );
 }
 
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
@@ -1466,6 +1539,14 @@ document.addEventListener('keydown', (event) => {
   if (tierNum >= 1 && tierNum <= MAX_TIER && String(tierNum) === event.key) {
     event.preventDefault();
     toggleTier(tierNum);
+    return;
+  }
+
+  // § Editing the Map — 8 toggles Redundant sidewalks on/off, same
+  // immediate-effect pattern as 1-7 above.
+  if (event.key === '8') {
+    event.preventDefault();
+    toggleRedundantSidewalks();
     return;
   }
 
