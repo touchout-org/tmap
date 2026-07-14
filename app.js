@@ -658,17 +658,29 @@ function renderPoiList() {
   poiListSelect.disabled = !lastAnchorName;
 }
 
-// § Additional POIs — "Selecting an item from the list box (or arrowing
-// through the list) pans to that POI." A native <select> already fires
-// 'change' on every arrow-key move, not just on a committed selection, so
-// this alone covers both interactions.
-poiListSelect.addEventListener('change', () => {
+// § Additional POIs — pans to whatever POI is currently selected in the
+// list box.
+function panToSelectedPoi() {
   if (poiListSelect.value === 'anchor') {
     panToPoint(lastAnchorLat, lastAnchorLon);
     return;
   }
   const poi = additionalPois[Number(poiListSelect.value)];
   if (poi) panToPoint(poi.lat, poi.lon);
+}
+
+// § Additional POIs — "Selecting an item from the list box (or arrowing
+// through the list) pans to that POI." A native <select> already fires
+// 'change' on every arrow-key move, not just on a committed selection, so
+// this alone covers both interactions -- except when the list has only
+// one entry (just the anchor, no additional POIs added yet): a
+// single-option select can never fire 'change', since there's nothing
+// else to select. Focusing it (by tabbing to it or clicking it) is the
+// only signal available in that case, so it gets the same snap-to-POI
+// treatment there.
+poiListSelect.addEventListener('change', panToSelectedPoi);
+poiListSelect.addEventListener('focus', () => {
+  if (poiListSelect.options.length === 1) panToSelectedPoi();
 });
 
 // § Editing the Map — every street/pathway name currently in lastWays
