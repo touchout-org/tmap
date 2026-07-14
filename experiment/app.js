@@ -232,7 +232,7 @@ function assignBrailleLabels(names) {
 
   for (const name of names) {
     const candidate = labelCandidateString(name);
-    const label = findUniqueWindow(candidate, used) || findUniqueDigitSuffix(candidate, used);
+    const label = findUniqueLabel(candidate, used) || findUniqueDigitSuffix(candidate, used);
     used.add(label);
     labels.set(name, label);
   }
@@ -241,20 +241,26 @@ function assignBrailleLabels(names) {
 }
 
 // § Label creation, steps 4-5 — try the candidate string's first three
-// characters, then each subsequent 3-character window, in order, for one
-// not already claimed by an earlier street. A candidate shorter than 3
-// characters is padded with dashes (the label's only allowed punctuation,
-// per the Label creation intro) rather than skipped. Returns null if every
-// window in the candidate string collides, so the caller can fall through
-// to the digit-suffix step.
-function findUniqueWindow(candidate, used) {
-  const maxStart = Math.max(candidate.length - 3, 0);
-  for (let start = 0; start <= maxStart; start++) {
-    const label = padLabel(candidate.slice(start, start + 3));
-    if (!used.has(label)) return label;
-  }
+// characters; on collision, keep the first two characters fixed and walk
+// only the third character forward through the rest of the candidate
+// string, rather than sliding the whole 3-character window. This keeps
+// same-prefix streets (e.g. "University Avenue"/"University Walk", or
+// "Virginia Gardens"/"Virginia Street") looking and feeling as similar as
+// the data allows -- only the one character that actually needs to differ
+// changes, instead of the whole label shifting to a different, unrelated
+// stretch of the name. A candidate shorter than 3 characters is padded
+// with dashes (the label's only allowed punctuation, per the Label
+// creation intro) rather than skipped -- there's nothing to walk through
+// in that case. Returns null if every remaining character collides too,
+// so the caller can fall through to the digit-suffix step.
+function findUniqueLabel(candidate, used) {
   if (candidate.length < 3) {
     const label = padLabel(candidate);
+    return used.has(label) ? null : label;
+  }
+  const prefix = candidate.slice(0, 2);
+  for (let i = 2; i < candidate.length; i++) {
+    const label = prefix + candidate[i];
     if (!used.has(label)) return label;
   }
   return null;
