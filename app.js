@@ -1527,13 +1527,23 @@ function placeLabels(candidates, gridBounds, activeZones) {
   const placed = { top: [], right: [], bottom: [], left: [] };
   const labeledNames = new Set();
 
-  function alongLimit(edge) {
-    return edge === 'top' || edge === 'bottom' ? gridBounds.width : gridBounds.height;
+  // § Braille labels — top/bottom zones are horizontally inset between
+  // the left/right zones (see drawLabelZoneRects), so their along-edge
+  // range is exactly the map's own width/height -- they never reach a
+  // corner. left/right zones, by contrast, render across the *full*
+  // display height, including the corners top/bottom are inset to avoid,
+  // so a label there can legitimately extend past the map's own top/
+  // bottom edge into that corner space. Expressed in the same map-
+  // relative coordinates as "along" (0 at the map's own top/left edge).
+  function alongRange(edge) {
+    if (edge === 'top' || edge === 'bottom') return { min: 0, max: gridBounds.width };
+    return { min: -gridBounds.offsetY, max: DOT_GRID_HEIGHT - gridBounds.offsetY };
   }
 
   function fits(edge, along, footprint) {
     const half = footprint / 2;
-    if (along - half < 0 || along + half > alongLimit(edge)) return false;
+    const range = alongRange(edge);
+    if (along - half < range.min || along + half > range.max) return false;
     for (const p of placed[edge]) {
       const gap = Math.abs(along - p.along) - (footprint / 2 + p.footprint / 2);
       if (gap < LABEL_WHITESPACE_DOTS) return false;
