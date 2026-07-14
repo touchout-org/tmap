@@ -79,10 +79,16 @@ The following table specifies the functions that can be accessed from the app or
 | Map Complexity: Simplified neighborhoods | `2` | none |
 | Map Complexity: Major streets | `3` | none |
 | Map Complexity: Major highways | `4` | none |
+| Toggle cursor-only mode | `0` | none |
+| Open Custom POI ("Drop Pin") dialog | `a` | none |
 
 Toggling a label setting from the keyboard reports the new state in the message field, in the form "top labels on/off" (etc.), which is mirrored to the Dot Pad message display. As with all message-display updates, the app-side field is the source of truth: it updates first, then pushes to the Dot Pad and triggers the ARIA live announcement — see [Message display architecture](#message-display-architecture).
 
 The 1-4 hotkeys jump straight to a Map Complexity level (see [Editing the Map](#editing-the-map)) without needing to open the Edit Map dialog, announcing "[level] visible." in the message field. If the dialog happens to be open, its Map Complexity radio button stays in sync no matter which path changed it.
+
+`0` hides every currently-visible street and POI and shows only the cursor, announcing "Cursor only"; pressing it again restores exactly what was showing before (whatever combination of Visible/Hidden Streets, Hidden Features, and Map Complexity was already in effect), announcing "Features restored." This is a display-only override — it never changes any of that underlying state, and the on-screen POI list box keeps working normally throughout, since it's a navigation aid rather than a rendered map feature.
+
+`a` opens the Custom POI dialog described under [Custom POIs](#custom-pois) — same as clicking "Drop Pin."
 
 Cursor rows match the dot mapping already established in [Cursor and hit testing](#cursor-and-hit-testing) (reused from DotSVG). Toggle Labels Top and Bottom are added here to complete the set of 4 label positions (matching the left/right/top/bottom checkboxes in the shared Braille Labels dialog — see [Settings](#settings)).
 
@@ -168,6 +174,12 @@ If a subsequent POI location is more than [threshold distance] away from the anc
 If a subsequent POI is less than [threshold distance] away, the new POI is added to the current map and the map pans to center that new POI. Panning behavior automatically happens, announcing the distance and direction from the anchor POI. Multiple additional POIs can be added to a single map.
 
 As POIs are added to the map, the locations are added to a list box on the left of the page. Selecting an item from the list box (or arrowing through the list) pans to that POI and triggers the related panning announcement.
+
+### Custom POIs
+
+A "Drop Pin" button next to the POI list box (hotkey `a`) opens a "Custom POI" dialog: a "POI Name:" edit field plus OK and Cancel buttons. Pressing Enter (or clicking OK) adds a new POI at the cursor's current position, using the entered name; pressing Escape (or clicking Cancel) closes the dialog without adding anything. A blank name is rejected by the field's own required-field validation, without needing a submit.
+
+A custom POI is added through the same path as any other additional POI — it shows up in the POI list box, the Edit Map dialog's POIs group, on-screen rendering, cursor hit-testing, and the tactile raster exactly like an address pulled from OSM, with the same short-address-style POI conventions (see [Additional POIs](#additional-pois)) except its name is whatever the user typed rather than a geocoded address. POI names are not required to be unique — this matches every other POI-naming path in the app, none of which enforce it either.
 
 ## Editing the Map
 

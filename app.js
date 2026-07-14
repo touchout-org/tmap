@@ -191,10 +191,15 @@ const labelCheckboxes = {
   right: document.getElementById('label-right')
 };
 const poiListSelect = document.getElementById('poi-list');
+const btnDropPin = document.getElementById('btn-drop-pin');
 const poiTooFarDialog = document.getElementById('poi-too-far-dialog');
 const poiTooFarMessage = document.getElementById('poi-too-far-message');
 const btnPoiShowAnyway = document.getElementById('btn-poi-show-anyway');
 const btnPoiCancel = document.getElementById('btn-poi-cancel');
+const customPoiDialog = document.getElementById('custom-poi-dialog');
+const customPoiForm = document.getElementById('custom-poi-form');
+const customPoiNameInput = document.getElementById('custom-poi-name');
+const btnCustomPoiCancel = document.getElementById('btn-custom-poi-cancel');
 const btnEditMap = document.getElementById('btn-edit-map');
 const editMapDialog = document.getElementById('edit-map-dialog');
 const editMapPoisList = document.getElementById('edit-map-pois-list');
@@ -266,6 +271,17 @@ let hiddenStreetNames = new Set();
 // (see visibleWays(), which ANDs both filters). Reset to 0 ("All streets
 // and pathways") on a brand-new anchor.
 let mapComplexityIndex = 0;
+
+// § Command / hotkey mapping — the 0 hotkey's "show only the cursor" mode.
+// A display-only override, not a real edit: when true, visibleWays()/
+// visiblePois() both short-circuit to empty, so rendering, the tactile
+// raster, and cursor hit-testing all show nothing but the cursor -- but
+// hiddenStreetNames/hiddenPoiNames/mapComplexityIndex are never touched,
+// so toggling this back off restores exactly whatever was showing before.
+// The on-screen POI dropdown is unaffected either way (it's a navigation
+// aid keyed off hiddenPoiNames directly, not visiblePois()). Reset to
+// false on a brand-new anchor, same as the other Edit Map state.
+let cursorOnlyMode = false;
 
 // The map's effective drawable region within the fixed DOT_GRID_WIDTH x
 // DOT_GRID_HEIGHT canvas, after carving out whichever label zones are
@@ -466,6 +482,14 @@ function setMapComplexity(index) {
   if (radio) radio.checked = true;
 }
 
+// § Command / hotkey mapping — the 0 hotkey. See cursorOnlyMode above for
+// what it does and doesn't affect.
+function toggleCursorOnlyMode() {
+  cursorOnlyMode = !cursorOnlyMode;
+  setMessage(cursorOnlyMode ? 'Cursor only' : 'Features restored');
+  refreshMap();
+}
+
 
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -575,6 +599,28 @@ function addAdditionalPoi(shortName, lat, lon) {
   renderPoiList();
   panToPoint(lat, lon);
 }
+
+// § Additional POIs — "Drop Pin" adds a custom, user-named POI at the
+// cursor's current position, via the same addAdditionalPoi path as any
+// other POI -- so it shows up in the POI dropdown, the Edit Map dialog,
+// rendering, hit-testing, and the tactile raster exactly like an
+// address pulled from OSM, with no separate plumbing needed.
+function openCustomPoiDialog() {
+  customPoiNameInput.value = '';
+  customPoiDialog.showModal();
+}
+
+btnDropPin.addEventListener('click', openCustomPoiDialog);
+
+customPoiForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = customPoiNameInput.value.trim();
+  if (!name) return;
+  customPoiDialog.close();
+  addAdditionalPoi(name, cursorLat, cursorLon);
+});
+
+btnCustomPoiCancel.addEventListener('click', () => customPoiDialog.close());
 
 // § POIs — the anchor is always the first entry (value "anchor"), followed
 // by every additional POI (value = its index into additionalPois).
@@ -1048,6 +1094,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   hiddenPoiNames = new Set();
   hiddenStreetNames = new Set();
   mapComplexityIndex = 0;
+  cursorOnlyMode = false;
 
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
@@ -1064,6 +1111,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   scaleSelect.disabled = false;
   panButtons.forEach((btn) => { btn.disabled = false; });
   btnEditMap.disabled = false;
+  btnDropPin.disabled = false;
   refreshMap();
 
   setMessage(shortName);
@@ -1343,8 +1391,11 @@ function allPois() {
 // § Editing the Map — allPois() minus whatever the user has unchecked in
 // the dialog. allPois() itself stays unfiltered so the dialog can still
 // list a hidden POI (and let it be turned back on); everywhere a POI is
-// actually shown, hit-tested, or brailled uses this instead.
+// actually shown, hit-tested, or brailled uses this instead. cursorOnlyMode
+// (the 0 hotkey) short-circuits this to nothing without touching
+// hiddenPoiNames itself -- see its declaration for why.
 function visiblePois() {
+  if (cursorOnlyMode) return [];
   return allPois().filter((poi) => !hiddenPoiNames.has(poi.name));
 }
 
@@ -1353,8 +1404,10 @@ function visiblePois() {
 // These are two independent filters, not one merged set: a manually-hidden
 // street stays hidden at every complexity level, and raising/lowering
 // complexity never touches hiddenStreetNames. lastWays itself stays
-// unfiltered for the same reason as visiblePois() above.
+// unfiltered for the same reason as visiblePois() above. cursorOnlyMode
+// short-circuits this the same way it does visiblePois().
 function visibleWays() {
+  if (cursorOnlyMode) return [];
   const maxTier = MAP_COMPLEXITY_LEVELS[mapComplexityIndex].maxTier;
   return lastWays.filter((way) =>
     !hiddenStreetNames.has(way.tags && way.tags.name) &&
@@ -1513,6 +1566,20 @@ document.addEventListener('keydown', (event) => {
   if (complexityNum >= 1 && complexityNum <= MAP_COMPLEXITY_LEVELS.length && String(complexityNum) === event.key) {
     event.preventDefault();
     setMapComplexity(complexityNum - 1);
+    return;
+  }
+
+  // § Command / hotkey mapping — 0 toggles cursor-only mode on/off.
+  if (event.key === '0') {
+    event.preventDefault();
+    toggleCursorOnlyMode();
+    return;
+  }
+
+  // § Additional POIs — a opens the Custom POI ("Drop Pin") dialog.
+  if (event.key === 'a') {
+    event.preventDefault();
+    openCustomPoiDialog();
     return;
   }
 

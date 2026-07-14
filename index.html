@@ -28,6 +28,7 @@
     <div id="poi-list-container">
       <label for="poi-list" id="poi-list-label">POIs</label>
       <select id="poi-list" disabled></select>
+      <button id="btn-drop-pin" type="button" disabled>Drop Pin</button>
     </div>
     <div id="map-container">
       <svg id="map" viewBox="0 0 600 400" role="img" aria-label="Street map"></svg>
@@ -45,6 +46,16 @@
     <p id="poi-too-far-message"></p>
     <button id="btn-poi-show-anyway" type="button">Show new location</button>
     <button id="btn-poi-cancel" type="button">Cancel</button>
+  </dialog>
+
+  <dialog id="custom-poi-dialog" aria-labelledby="custom-poi-heading">
+    <h3 id="custom-poi-heading">Custom POI</h3>
+    <form id="custom-poi-form">
+      <label for="custom-poi-name">POI Name:</label>
+      <input type="text" id="custom-poi-name" name="poi-name" autocomplete="off" required>
+      <button id="btn-custom-poi-ok" type="submit">OK</button>
+      <button id="btn-custom-poi-cancel" type="button">Cancel</button>
+    </form>
   </dialog>
 
   <div id="message-display" role="alert" aria-live="assertive"></div>

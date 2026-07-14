@@ -79,6 +79,10 @@ body {
   text-overflow: ellipsis;
 }
 
+#btn-drop-pin {
+  margin-top: 0.4rem;
+}
+
 /* § Screen Layout — "Move Map," arranged in a plus sign: N top-center,
    W/E either side of the (empty) middle, S bottom-center. */
 #move-map {
@@ -143,11 +147,23 @@ body {
 
 #labels-dialog,
 #poi-too-far-dialog,
-#edit-map-dialog {
+#edit-map-dialog,
+#custom-poi-dialog {
   border: 1px solid #999;
   border-radius: 4px;
   padding: 1rem 1.25rem;
   max-width: 24rem;
+}
+
+#custom-poi-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+#custom-poi-name {
+  width: 100%;
 }
 
 #labels-dialog div {
