@@ -115,7 +115,10 @@ Any object that intersects with the edge of the circle is considered "current." 
 
 Current object names are displayed in the message field and on the message display.
 
-We display only unique names for current objects: if several current objects share the same name, we display that name once. If there are multiple names, we join them with an ampersand. For example, if there are 7 current objects with 3 of them called "Main St" and 4 of them called "Spruce St," the message display says "Main St & Spruce St."
+We display only unique names for current objects: if several current objects share the same name, we display that name once. Names are run through [feature name compacting](#feature-name-compacting) before display, same as braille labels — this applies uniformly to streets and POIs alike (an address-style POI name like "1400 Hearst Avenue" compacts to "1400 Hearst Ave" the same way a street does; a freeform name with no recognized type or ordinal word just passes through unchanged).
+
+* If there is exactly one current object, the message display shows its compacted stem and type together, e.g. "9th St" or "Sacramento St."
+* If there are multiple current objects, only the compacted stem of each is shown (no type), joined by an ampersand — e.g. two current objects "Main Street" and "Spruce Street" show as "Main & Spruce," not "Main St & Spruce St." Dropping the type keeps multi-name messages from growing unwieldy when several features are packed under the cursor at once.
 
 We will refine this behavior as we experiment with the UI.
 

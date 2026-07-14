@@ -2048,7 +2048,18 @@ function currentObjectNames() {
     }
   }
 
-  return names.size ? Array.from(names).join(' & ') : null;
+  if (!names.size) return null;
+  const nameList = Array.from(names);
+  // § Cursor and hit testing — a single feature under the cursor is
+  // announced in compacted form (stem + type, e.g. "9th St"); with multiple
+  // features, only the compacted stem is used for each (no type), joined by
+  // " & ", to keep the message from ballooning with repeated street-type
+  // words when several names are packed together.
+  if (nameList.length === 1) {
+    const { stem, type } = compactFeatureName(nameList[0]);
+    return type ? `${stem} ${type}` : stem;
+  }
+  return nameList.map((name) => compactFeatureName(name).stem).join(' & ');
 }
 
 // § POIs — the anchor plus every additional POI, as a flat list of
