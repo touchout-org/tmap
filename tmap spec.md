@@ -123,59 +123,9 @@ The scale appears on the screen as a combo box showing the value of the current 
 * If Display Area is selected for Scale Type in settings, values are of the form "300 feet by 200 feet" or "600 m by 400 m."
 * Whenever the scale is adjusted, the new scale appears on the message display.
 
-### Data ingestion and cleaning pipeline
-
-Runs once per fetch (new location, new anchor POI, or panning past the current data boundary — see [Data sources](#data-sources)):
-
-1. **Geocode** — Nominatim turns the entered address into coordinates for the anchor POI.
-2. **Fetch** — Overpass returns named, highway-tagged ways with geometry inside the POI's bounding square.
-3. **Group by name** — ways sharing a street name are bundled together for the checks below.
-4. **Detect carriageway pairs** — within each name group, flag same-class, oneway, opposite-direction, nearby, overlapping ways as pairs (see [Divided-road carriageway collapse](#divided-road-carriageway-collapse)).
-5. **Roadway/pedestrian dedup** — footway/path ways are dropped when a roadway-class way shares their name (see [Same-name roadway/pedestrian de-duplication](#same-name-roadway-pedestrian-de-duplication)).
-6. **Collapse to centerline** — matched carriageway pairs are resampled and averaged into a single centerline way (see [Divided-road carriageway collapse](#divided-road-carriageway-collapse)).
-7. **Assign tier** — each remaining way gets a fixed importance tier from its highway class (see [Street importance tiers](#street-importance-tiers)).
-
-### Rendering pipeline
-
-Reruns on every pan, zoom, or scale change — kept cheap by design, since it must never introduce a visible delay:
-
-1. **Compute density** — a grid overlay counts distinct streets per cell across the current view.
-2. **Escalate tier-drop** — lowest tiers are hidden and density is rechecked until it clears the threshold.
-3. **Render** — a CSS class swap shows/hides ways by tier, with no per-element JS work.
-
-Full detail in [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering).
-
-### Same-name roadway/pedestrian de-duplication
-
-Derived from the "Unique streets" view built in the OSM Data Mine experiment (see `experiment/OSMExperiments.md`), which turned out to closely match what TMPAP4Dot itself needs when deciding which OSM ways represent a real, distinct street vs. redundant parallel infrastructure sharing that street's name.
-
-**Rule:** for a given street name, if at least one of its ways is tagged with a "roadway" `highway` value, then ways tagged with a "pedestrian/path" `highway` value under that same name are dropped — treated as a sidewalk/path running alongside the road rather than a separate feature. Street names with no roadway-class way at all (a standalone path/greenway not paired with any road of the same name) are left untouched, keeping all their segments.
-
-* Roadway classes: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `unclassified`, `residential`, `living_street`, `service`.
-* Pedestrian/path classes (suppressed only when paired with a roadway of the same name): `footway`, `path`, `cycleway`, `pedestrian`, `steps`.
-
-This is a starting point, not a final decision — to be revisited as more of the app's actual requirements (e.g., whether sidewalks need to be represented separately for wayfinding purposes even when paired with a road) become clear.
-
-### Divided-road carriageway collapse
-
-For divided/dual-carriageway streets (e.g., University Ave, Bancroft Way, MLK Jr. Way in the Berkeley test data), OSM correctly maps each direction of travel as its own separate way rather than one way per block — so a single visual block can produce multiple ways sharing the same name, running parallel and offset by a small distance (the median width). Left unhandled, this both clutters the display with redundant near-duplicate lines and skews the density calculation in [Map density evaluation](#map-density-evaluation-and-tier-based-decluttering) — a two-way boulevard would count as two streets in a cell instead of one.
-
-This is a named, standard cartographic-generalization operation — ESRI's Cartography toolbox calls it **"Collapse Dual Lines to Centerline,"** scoped explicitly to "regular, near-parallel pairs of lines, such as road casings," and explicitly *not* to multi-lane highways with interchanges, ramps, or merging tracks (that harder case has its own tool, "Merge Divided Roads," and is out of scope here — no interchange handling is planned).
-
-**Candidate-pair detection**, run within each same-name group from the ingestion pipeline, in order of reliability:
-
-1. **Explicit tag** — if both ways carry OSM's `dual_carriageway=yes` tag, treat them as a confirmed pair immediately.
-2. **`oneway=yes` + opposite direction** — the standard OSM mapping convention when the explicit tag is absent: a real carriageway pair is each tagged `oneway=yes` and runs roughly antiparallel (the bearing of one way's start→end vector is roughly the reverse of the other's). A same-named way with no `oneway` tag is presumed to be an ordinary single-carriageway block, not a pairing candidate.
-3. **Maximum separation** — among oneway/opposite-direction candidates, the perpendicular distance between the two ways must stay under a maximum-width threshold throughout — mirrors the "Maximum Width" parameter ESRI's own tool requires. **Experimentally-tuned parameter, no default yet** (typical median widths run from a couple of meters to 20+ for wide boulevards).
-4. **Consistent overlap** — the two ways must overlap substantially along their length with roughly constant separation, not just touch near an endpoint. This is what distinguishes a true parallel pair from two same-named ways that are just sequential blocks (touch, then diverge) or a coincidental name collision elsewhere in the fetch box.
-
-**Collapse method:** for each matched pair, resample both ways to N evenly-spaced points along arc length, pair up corresponding points, and average each pair into one centerline vertex. This point-correspondence method is a deliberately lighter-weight substitute for the Delaunay-triangulation-based approach ESRI/Skeletron/PostGIS implementations use internally — appropriate because our case is narrow (simple parallel pairs, not interchanges), and it avoids adding a geometry-library dependency. If real data later surfaces divided roads this method can't handle well (interchanges, ramps, wildly uneven correspondence), that's the trigger to revisit with a true Delaunay-based centerline — not needed now.
-
-A same-named way that doesn't satisfy all of the candidate-pair checks (or carries no tag) is left alone — this is what correctly represents "genuinely different parts of the road" rather than a duplicate carriageway.
-
 ### Street importance tiers
 
-Each way remaining after the ingestion pipeline gets a fixed tier from its `highway` class, computed once at fetch time (not recomputed on pan/zoom):
+Each way is tagged with a fixed tier from its `highway` class at fetch time (not recomputed on pan/zoom):
 
 | Tier | Highway classes |
 |---|---|
@@ -185,23 +135,15 @@ Each way remaining after the ingestion pipeline gets a fixed tier from its `high
 | 4 | tertiary |
 | 5 | unclassified, residential, living_street |
 | 6 | service |
-| 7 | footway, path, cycleway, pedestrian, steps *(only standalone paths reach here — ones paired with a same-named road are already dropped by [same-name roadway/pedestrian de-duplication](#same-name-roadway-pedestrian-de-duplication))* |
+| 7 | footway, path, cycleway, pedestrian, steps |
 
-POIs are never tiered and are never affected by tier-based hiding — see below.
+POIs are never tiered. Tiers are purely data — nothing hides a tier automatically. They exist to drive the Map Complexity filter (see [Editing the Map](#editing-the-map)) and, later, street-label placement priority (see [Label placement](#label-placement)).
 
-### Map density evaluation and tier-based decluttering
+### Map filtering
 
-Replaces an earlier placeholder rule (remove a street if it's within 3 pixels of another, non-intersecting street) with a density-driven approach: streets are only hidden once the currently-visible network is measurably too dense to distinguish by touch, not based on scale alone. A sparse map should never lose a street just because the user zoomed out; a dense map may need to shed streets even at a fairly zoomed-in scale.
+Streets and POIs are fetched as-is from Overpass, with no automated cleanup, deduplication, or geometric simplification applied. All filtering and decluttering is manual, via the Edit Map dialog — see [Editing the Map](#editing-the-map) for the current design: per-item show/hide (Visible Streets, POIs, and the shared Hidden Features list) plus the Map Complexity tier-cutoff radio group for bulk detail control.
 
-**Density parameter:** overlay a grid on the current viewbox, sized in `densityCellSize` (a display-pixel span — **experimentally-tuned parameter, deliberately decoupled from the 3-pixel minimum-feature-separation constant used elsewhere**, since this cell needs to be large enough to plausibly contain several distinct features, not just describe the closest two can sit). Rasterize each visible street's geometry into the grid (standard line rasterization, no trig/distance math), and count **distinct streets per cell** — not raw way-segments, since one named street is often split into many OSM ways at intersections and would otherwise overstate its own density. The density parameter is the max (or a high percentile, to ignore one freak intersection cell) count across the viewport.
-
-**Escalation:** compute the density parameter with all 7 tiers shown. If it's at or under the (experimentally-tuned) density threshold, stop — show everything. If it's over, hide tier 7, recompute density over the remaining tiers, and check again. Repeat, dropping one tier at a time, until density clears the threshold or tier 1 is reached. Because tiers were precomputed once at fetch time, each recheck is a cheap O(n) filter and grid recount — no geometry recomputation.
-
-**Rendering:** each way is stamped with a `data-tier="N"` attribute at render time. A scale, pan, or zoom change that crosses a density threshold is applied as a single CSS class swap on the map container (e.g. `.scale-t4 [data-tier="5"], .scale-t4 [data-tier="6"], .scale-t4 [data-tier="7"] { display: none }`) — the browser's own selector matching does the filtering, with no per-element JS loop, so this can't introduce a rendering delay regardless of street count.
-
-Streets are never removed from the underlying map data at any scale, only from the display — they reappear when density drops back under the threshold. POIs are excluded from tiering entirely and are never hidden by this mechanism.
-
-**Parameters still needing empirical tuning**, once this is running against real Overpass data on actual hardware: `densityCellSize`, the density threshold(s) per tier-drop step, and the divided-road max-separation width from [Divided-road carriageway collapse](#divided-road-carriageway-collapse). All three are exposed as plain edit fields in an early, developer-facing settings surface (see [Experimental tuning fields](#experimental-tuning-fields-early-development-only)) rather than waiting for the full Settings dialog, so they can be adjusted live during testing.
+An earlier, fully-automated version of this pipeline (name-based roadway/pedestrian dedup, divided-road carriageway collapse, and density-driven tier decluttering, with no manual override) was designed and built first, then removed after hands-on testing showed it over-decluttered some areas, under-decluttered others, and dropped features the user wanted kept, with no way to correct a bad call. See [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) for the full historical design, kept for reference in case any of it is worth reviving in some form.
 
 ## Pan Behavior
 
@@ -310,10 +252,6 @@ Default values in [brackets]. Before settings are implemented, we set default va
 * Braille labels (4 checkboxes): left, right, top, bottom — [none checked]. These are the same 4 checkboxes exposed by the "Braille Labels..." button in Screen Layout, not a separate control — deliberately kept off the main page and out of the general Settings dialog, in their own dedicated dialog.
 * POI distance threshold: [1 mile], 2 miles, 3 miles
 
-### Experimental tuning fields (early development only)
-
-The three empirical parameters flagged in [Divided-road carriageway collapse](#divided-road-carriageway-collapse) and [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering) — `densityCellSize`, the density threshold(s) per tier-drop step, and the divided-road maximum-separation width — ship as plain edit fields in a minimal, developer-facing settings surface as early as Phase 2 (see [Prioritized Research & Implementation List](#prioritized-research--implementation-list)), alongside the algorithms that consume them. This is deliberately separate from, and earlier than, the polished Settings dialog above: the point is to let values be changed live while testing against real Overpass data on actual hardware, without a code change or redeploy. None of the three has a default yet, so each field starts blank/unset until testing establishes one. Once values are settled, this surface can either be retired (values hardcoded) or folded into the full Settings dialog as an advanced section — undecided, not needed until the values are known.
-
 ## Accounts and Data
 
 ### Authentication
@@ -345,7 +283,7 @@ Also resolved, same day: the [Command / hotkey mapping](#command--hotkey-mapping
 
 Also resolved as of 2026-07-08 (see [Data sources](#data-sources), [Pan Behavior](#pan-behavior), [Saving and exporting](#saving-and-exporting)): the pan-past-boundary behavior (reject the pan, beep, message field reports "Edge of Map"), the priority and baseline requirement for OSM error reporting (P0 — must surface to the message field for debugging, wording/retry logic can refine later), and the "saving" vs. "download" distinction (Download = local `.svg` file, no account; Save = cloud archive via My Archives, for returning to in-progress edits — these are two different actions, not a naming ambiguity).
 
-Also resolved as of 2026-07-08 (see [Data ingestion and cleaning pipeline](#data-ingestion-and-cleaning-pipeline), [Divided-road carriageway collapse](#divided-road-carriageway-collapse), [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering)): the street-declutter algorithm — semantic importance tiers plus measured grid density, replacing the placeholder proximity rule — and the divided-road parallel-carriageway handling — candidate-pair detection plus point-correspondence centerline collapse, replacing the earlier "leave it alone" decision — are both now designed, though several thresholds (`densityCellSize`, the density threshold(s), the carriageway max-separation width) remain open for empirical tuning once real data is running on actual hardware.
+Also resolved as of 2026-07-08 (see [Data ingestion and cleaning pipeline](#data-ingestion-and-cleaning-pipeline-retired), [Divided-road carriageway collapse](#divided-road-carriageway-collapse-retired), [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering-retired) — all since retired, see the linked appendix sections): the street-declutter algorithm — semantic importance tiers plus measured grid density, replacing the placeholder proximity rule — and the divided-road parallel-carriageway handling — candidate-pair detection plus point-correspondence centerline collapse, replacing the earlier "leave it alone" decision — are both now designed, though several thresholds (`densityCellSize`, the density threshold(s), the carriageway max-separation width) remain open for empirical tuning once real data is running on actual hardware.
 
 Also resolved as of 2026-07-08: saved-map versioning is a manageable risk, not a blocking design gap — the app will either migrate legacy archive data if the save format ever changes, or take care not to make changes that would break compatibility with existing saves; no dedicated migration system is required as a feature. Display Area scale presets are calculated from the same Traditional Scale preset list, rounded as needed for simplicity, rather than authored as a separate list — see [Settings](#settings).
 
@@ -353,7 +291,7 @@ Also resolved as of 2026-07-08 (see [Label placement](#label-placement)): the la
 
 Also resolved as of 2026-07-08 (see [Authentication](#authentication), [Cloud storage](#cloud-storage)): the auth/cloud-storage backend is Firebase (Firestore + Firebase Authentication), chosen over Supabase and Appwrite specifically because its free tier never pauses for inactivity — the other two both freeze a free project after a week without database activity, a bad failure mode for a niche accessibility tool with sporadic usage. Google-only sign-in (no fallback provider for non-Google users) is kept as the accepted scope, not treated as a blocking gap — revisit only if real user feedback surfaces a need.
 
-**No open gaps remain as of 2026-07-08.** The three empirical parameters flagged in [Divided-road carriageway collapse](#divided-road-carriageway-collapse) and [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering) are still unset, but that's expected to be resolved through hands-on tuning during implementation and testing, not a remaining design question.
+**No open gaps remain as of 2026-07-08.** The three empirical parameters flagged in [Divided-road carriageway collapse](#divided-road-carriageway-collapse-retired) and [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering-retired) are still unset, but that's expected to be resolved through hands-on tuning during implementation and testing, not a remaining design question.
 
 ## Feature Priorities
 
@@ -369,7 +307,7 @@ Priority tiers as set by the user on 2026-07-08:
 |---|---|---|
 | Address search + Nominatim geocoding | Data acquisition | Entry point for the whole app |
 | Overpass fetch (street/way data) | Data acquisition | |
-| Same-name street de-duplication filtering | Data cleaning | Without it, every street clutters with its own sidewalk/path |
+| ~~Same-name street de-duplication filtering~~ | Data cleaning | Built, then retired along with the rest of the automated pipeline in favor of manual filtering — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | SVG map rendering (on screen) | Presentation | Must work standalone with no Dot Pad connected, per Hardware requirement |
 | Chrome browser check + warning | Presentation | Gates BLE connectivity (Web Bluetooth is Chromium-only); non-blocking |
 | Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Sit in the Controls row alongside Edit map/Braille Labels/My Archives/Settings |
@@ -390,12 +328,12 @@ Priority tiers as set by the user on 2026-07-08:
 
 | Feature | Category | Notes |
 |---|---|---|
-| Settings dialog (units, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. Distinct from the earlier, minimal [experimental tuning fields](#experimental-tuning-fields-early-development-only) for the decluttering/collapse parameters (Phase 2) — those ship before this full dialog does |
+| Settings dialog (units, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. An earlier, minimal experimental tuning-fields surface for the (now-retired) automated decluttering/collapse parameters existed briefly before this dialog — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Edit Map dialog~~ | Map editing | Done, in a different shape than originally planned here — see [Editing the Map](#editing-the-map) |
 | Download to a local `.svg` file | Downloading | Distinct from full My Archives (P2) — no account needed |
 | Braille translator (multi-code: US uncontracted, contracted UEB) | Braille translation | Resolved: baseline 8-dot computer output ships early via the reused DotSVG module, no translator needed; building the full multi-code translator is phased into Phase 5 as an external dependency |
-| Large-scale street decluttering algorithm | Large-scale decluttering | Design complete — semantic tiers + measured grid density (see [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering)); ships with early edit fields for its tunable thresholds (see [Experimental tuning fields](#experimental-tuning-fields-early-development-only)) rather than hardcoded values |
-| Divided-road carriageway collapse | Large-scale decluttering | Moved up from the old "leave it alone" P2 item now that a design exists (see [Divided-road carriageway collapse](#divided-road-carriageway-collapse)); its max-separation width likewise ships as an early edit field |
+| ~~Large-scale street decluttering algorithm~~ | Large-scale decluttering | Built (semantic tiers + measured grid density), then retired in favor of the manual Map Complexity filter — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
+| ~~Divided-road carriageway collapse~~ | Large-scale decluttering | Built, then retired along with the rest of the automated pipeline — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 
 ### P2
 
@@ -410,7 +348,7 @@ Priority tiers as set by the user on 2026-07-08:
 
 **Phase 0 — Research spikes (do before committing to architecture)**
 
-1. ~~Street-declutter algorithm: survey existing approaches~~ — done: replaced the 3-pixel-proximity placeholder with semantic importance tiers plus measured grid density (see [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering)); divided-road parallel-carriageway handling was resolved alongside it (see [Divided-road carriageway collapse](#divided-road-carriageway-collapse)).
+1. ~~Street-declutter algorithm: survey existing approaches~~ — done: replaced the 3-pixel-proximity placeholder with semantic importance tiers plus measured grid density; divided-road parallel-carriageway handling was resolved alongside it. That whole automated design was later built, tested, and retired in favor of manual filtering — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline).
 2. ~~Confirm Dot Pad hardware key numbering against SDK docs~~ — done: dots 3, 2, 5, 6 (left, up, down, right) for cursor movement is the pattern already implemented and reused from the DotSVG repo, not a placeholder.
 3. ~~Decide the live-data architecture~~ — done: Nominatim + Overpass, confirmed as the app's data source (the experiment site validated this choice).
 
@@ -426,9 +364,9 @@ Priority tiers as set by the user on 2026-07-08:
 
 **Phase 2 — Filtering and decluttering**
 
-11. Implement the same-name roadway/pedestrian de-duplication rule.
-12. Implement divided-road carriageway-pair detection and centerline collapse, with its maximum-separation width exposed as a plain edit field (see [Experimental tuning fields](#experimental-tuning-fields-early-development-only)) rather than hardcoded, so it can be tuned against real data.
-13. Implement the tier assignment, grid-density calculation, and escalating tier-drop rendering logic from [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering), with `densityCellSize` and the density threshold(s) likewise exposed as early edit fields rather than hardcoded.
+11. ~~Implement the same-name roadway/pedestrian de-duplication rule.~~ — done, then retired (see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline)).
+12. ~~Implement divided-road carriageway-pair detection and centerline collapse.~~ — done, then retired (see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline)).
+13. ~~Implement tier assignment, grid-density calculation, and escalating tier-drop rendering.~~ — tier assignment survives (see [Street importance tiers](#street-importance-tiers)); the grid-density/escalation logic was built, then retired in favor of the manual Map Complexity filter (see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline)).
 
 **Phase 3 — POIs, editing, and download**
 
@@ -449,3 +387,75 @@ Priority tiers as set by the user on 2026-07-08:
 22. My Archives (save/load/rename/delete) — distinct from Download, which ships in Phase 3 as a P1 feature needing no account. Format-versioning risk is resolved as a policy (migrate legacy data or avoid breaking format changes), not a system to build — see [Open Questions & Critical Gaps](#open-questions--critical-gaps).
 23. Settings persistence across sessions. Display Area scale presets are already fully defined (calculated from the Traditional Scale list, see [Settings](#settings)) — no longer an open item here.
 24. Braille translator library selection/build (multi-code: formalizing 8-dot computer plus adding US uncontracted and contracted UEB) — moved from Phase 0. Baseline 8-dot computer output for the message display doesn't need this; it's only needed once the Braille code setting has more than one option.
+
+## Appendix: Retired Automated Data Cleaning Pipeline
+
+Everything in this appendix was designed, implemented, and shipped, then removed on the `experiment/manual-declutter` branch after hands-on testing against real Overpass data (Berkeley and Brooklyn test areas) showed it over-decluttered some areas, under-decluttered others, and silently dropped features (like sidewalks) the user wanted kept — with no way to correct a bad automated call short of adjusting a global tuning parameter and hoping. It was replaced by the fully manual model described in [Map filtering](#map-filtering) and [Editing the Map](#editing-the-map): everything Overpass returns is shown by default, and the user controls what's hidden, per-item and via the Map Complexity tier cutoff, with every action immediately reversible. [Street importance tiers](#street-importance-tiers) is the one piece of this that survived — tiers are still assigned to every way, just as inert data rather than an automatic-hiding trigger.
+
+Kept here for reference in case any part of this design — the tiering scheme, the carriageway-collapse geometry, the density-based decluttering math — is worth reviving in some form, e.g. as an optional "auto-suggest" layer on top of the current manual controls, rather than a mandatory pipeline.
+
+### Data ingestion and cleaning pipeline (retired)
+
+Ran once per fetch (new location, new anchor POI, or panning past the current data boundary):
+
+1. **Geocode** — Nominatim turns the entered address into coordinates for the anchor POI.
+2. **Fetch** — Overpass returns named, highway-tagged ways with geometry inside the POI's bounding square.
+3. **Group by name** — ways sharing a street name are bundled together for the checks below.
+4. **Detect carriageway pairs** — within each name group, flag same-class, oneway, opposite-direction, nearby, overlapping ways as pairs (see [Divided-road carriageway collapse (retired)](#divided-road-carriageway-collapse-retired)).
+5. **Roadway/pedestrian dedup** — footway/path ways are dropped when a roadway-class way shares their name (see [Same-name roadway/pedestrian de-duplication (retired)](#same-name-roadway-pedestrian-de-duplication-retired)).
+6. **Collapse to centerline** — matched carriageway pairs are resampled and averaged into a single centerline way (see [Divided-road carriageway collapse (retired)](#divided-road-carriageway-collapse-retired)).
+7. **Assign tier** — each remaining way gets a fixed importance tier from its highway class (see [Street importance tiers](#street-importance-tiers) — this step is the one part of the old pipeline still current).
+
+### Rendering pipeline (retired)
+
+Reran on every pan, zoom, or scale change — kept cheap by design, since it must never introduce a visible delay:
+
+1. **Compute density** — a grid overlay counts distinct streets per cell across the current view.
+2. **Escalate tier-drop** — lowest tiers are hidden and density is rechecked until it clears the threshold.
+3. **Render** — a CSS class swap shows/hides ways by tier, with no per-element JS work.
+
+Full detail in [Map density evaluation and tier-based decluttering (retired)](#map-density-evaluation-and-tier-based-decluttering-retired).
+
+### Same-name roadway/pedestrian de-duplication (retired)
+
+Derived from the "Unique streets" view built in the OSM Data Mine experiment (see `experiment/OSMExperiments.md`), which turned out to closely match what TMPAP4Dot itself needs when deciding which OSM ways represent a real, distinct street vs. redundant parallel infrastructure sharing that street's name.
+
+**Rule:** for a given street name, if at least one of its ways is tagged with a "roadway" `highway` value, then ways tagged with a "pedestrian/path" `highway` value under that same name are dropped — treated as a sidewalk/path running alongside the road rather than a separate feature. Street names with no roadway-class way at all (a standalone path/greenway not paired with any road of the same name) are left untouched, keeping all their segments.
+
+* Roadway classes: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `unclassified`, `residential`, `living_street`, `service`.
+* Pedestrian/path classes (suppressed only when paired with a roadway of the same name): `footway`, `path`, `cycleway`, `pedestrian`, `steps`.
+
+**Why it was retired:** this rule is all-or-nothing per street name, with no geometric reasoning — a footway loses its name-match anywhere in the whole fetch box, even blocks away from the road it's nominally "redundant" with. This is exactly what caused the "dropped sidewalks I wanted to keep" complaint that started the manual-declutter branch. A later, tier-based generalization of this same rule was tried again as an explicitly toggle-able (not automatic) filter and was itself retired shortly after in favor of the current Visible/Hidden Streets model — see the `experiment/manual-declutter` branch's commit history (commits around `7324c55` and `05ed1b6`) for that intermediate step.
+
+### Divided-road carriageway collapse (retired)
+
+For divided/dual-carriageway streets (e.g., University Ave, Bancroft Way, MLK Jr. Way in the Berkeley test data), OSM correctly maps each direction of travel as its own separate way rather than one way per block — so a single visual block can produce multiple ways sharing the same name, running parallel and offset by a small distance (the median width). Left unhandled, this both clutters the display with redundant near-duplicate lines and skews the density calculation in [Map density evaluation (retired)](#map-density-evaluation-and-tier-based-decluttering-retired) — a two-way boulevard would count as two streets in a cell instead of one.
+
+This is a named, standard cartographic-generalization operation — ESRI's Cartography toolbox calls it **"Collapse Dual Lines to Centerline,"** scoped explicitly to "regular, near-parallel pairs of lines, such as road casings," and explicitly *not* to multi-lane highways with interchanges, ramps, or merging tracks (that harder case has its own tool, "Merge Divided Roads," and is out of scope here — no interchange handling is planned).
+
+**Candidate-pair detection**, run within each same-name group from the ingestion pipeline, in order of reliability:
+
+1. **Explicit tag** — if both ways carry OSM's `dual_carriageway=yes` tag, treat them as a confirmed pair immediately.
+2. **`oneway=yes` + opposite direction** — the standard OSM mapping convention when the explicit tag is absent: a real carriageway pair is each tagged `oneway=yes` and runs roughly antiparallel (the bearing of one way's start→end vector is roughly the reverse of the other's). A same-named way with no `oneway` tag is presumed to be an ordinary single-carriageway block, not a pairing candidate.
+3. **Maximum separation** — among oneway/opposite-direction candidates, the perpendicular distance between the two ways must stay under a maximum-width threshold throughout — mirrors the "Maximum Width" parameter ESRI's own tool requires. Never got past "experimentally-tuned, 200ft" before the whole mechanism was retired.
+4. **Consistent overlap** — the two ways must overlap substantially along their length with roughly constant separation, not just touch near an endpoint. This is what distinguishes a true parallel pair from two same-named ways that are just sequential blocks (touch, then diverge) or a coincidental name collision elsewhere in the fetch box.
+
+**Collapse method:** for each matched pair, resample both ways to N evenly-spaced points along arc length, pair up corresponding points, and average each pair into one centerline vertex. This point-correspondence method was a deliberately lighter-weight substitute for the Delaunay-triangulation-based approach ESRI/Skeletron/PostGIS implementations use internally — appropriate because the real-world case was narrow (simple parallel pairs, not interchanges), and it avoided adding a geometry-library dependency.
+
+A same-named way that didn't satisfy all of the candidate-pair checks (or carried no tag) was left alone. The shipped implementation went through several rewrites to fix real bugs found via local Node testing against cached real Overpass data — an inverted bearing-comparison formula, a one-directional distance check, and (the big one) naive union-find clustering catastrophically over-merging unrelated blocks into single 4000+ft "streets," fixed with greedy mutual-compatibility clustering. None of that engineering was wasted even though the feature was retired — the same "extract pure functions, test against real cached data in Node before touching the browser" workflow is still how this codebase debugs geometry work.
+
+### Street importance tiers (not retired — see current section)
+
+This part of the old pipeline is still live and unchanged in substance (same tier table) — see the current [Street importance tiers](#street-importance-tiers) section earlier in this doc. It's cross-referenced here only because the retired pipeline steps above depended on it; it was never itself removed.
+
+### Map density evaluation and tier-based decluttering (retired)
+
+Replaced an earlier placeholder rule (remove a street if it's within 3 pixels of another, non-intersecting street) with a density-driven approach: streets were only hidden once the currently-visible network was measurably too dense to distinguish by touch, not based on scale alone.
+
+**Density parameter:** overlay a grid on the current viewbox, sized in `densityCellSize` (a display-pixel span, tuned to 20px — deliberately decoupled from the 3-pixel minimum-feature-separation constant used elsewhere, since this cell needed to be large enough to plausibly contain several distinct features, not just describe the closest two can sit). Rasterize each visible street's geometry into the grid and count **distinct streets per cell** — not raw way-segments, since one named street is often split into many OSM ways at intersections and would otherwise overstate its own density.
+
+**Escalation:** compute the density parameter with all 7 tiers shown. If it's at or under the density threshold (tuned to 2), stop — show everything. If it's over, hide tier 7, recompute density over the remaining tiers, and check again. Repeat, dropping one tier at a time, until density clears the threshold or tier 1 is reached.
+
+**Rendering:** each way was stamped with a `data-tier="N"` attribute at render time. A scale, pan, or zoom change that crossed a density threshold was applied as a single CSS class swap on the map container — the browser's own selector matching did the filtering, with no per-element JS loop.
+
+**Why it was retired:** the user reported the automated tier-drop kicking in too early in some neighborhoods (Park Slope, Brooklyn) and too late in others (West Berkeley) — a single global `densityCellSize`/threshold pair doesn't fit every street pattern, and there was no way to correct a specific bad call without changing the threshold for the whole map. The replacement, Map Complexity, trades automatic density-awareness for a small, predictable set of manually-selected levels plus fully manual per-street override — see [Map filtering](#map-filtering).
