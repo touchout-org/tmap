@@ -1439,14 +1439,20 @@ function labelCandidateString(name) {
 // 3-character label. Processes names in the given order (alphabetical, so
 // output is stable/reproducible run to run) -- uniqueness resolution is
 // first-come-first-served, so earlier names in the list get first claim
-// on their natural 3-letter window.
+// on their natural 3-letter window. A candidate with 2+ digits (numbered
+// streets, after Feature name compacting's ordinal conversion) tries the
+// digit-anchored approach first -- a generic character-window walk over a
+// number is exactly the "arbitrary and hard to interpret" case this step
+// exists to avoid, since the actual digits are the single most meaningful
+// part of a numbered street's name.
 function assignBrailleLabels(names) {
   const used = new Set();
   const labels = new Map();
 
   for (const name of names) {
     const candidate = labelCandidateString(name);
-    const label = findUniqueLabel(candidate, used)
+    const label = findUniqueDigitAnchoredLabel(candidate, used)
+      || findUniqueLabel(candidate, used)
       || findUniqueLabelWalkingMiddle(candidate, used)
       || findUniqueDigitSuffix(candidate, used);
     used.add(label);
@@ -1454,6 +1460,57 @@ function assignBrailleLabels(names) {
   }
 
   return labels;
+}
+
+// § Label creation — for a candidate string containing a run of 2+
+// digits (there is at most one, since ordinal conversion only ever
+// produces a single digit run per name, and neither direction nor
+// street-type abbreviations introduce digits), tries a label anchored on
+// those digits rather than falling through to the generic window-walk
+// below. Exactly 2 digits: the pair itself is the anchor. 3 or more
+// digits: try the rightmost 3 digits alone first (no letter at all --
+// e.g. "West 130th Street" -> "130"); if that collides, drop to the
+// rightmost 2 digits and anchor on those instead. Returns null (falling
+// through to the generic algorithm) for 0 or 1 digit, or if every
+// digit-anchored attempt collides.
+function findUniqueDigitAnchoredLabel(candidate, used) {
+  const match = candidate.match(/\d+/);
+  if (!match || match[0].length < 2) return null;
+
+  const digits = match[0];
+  const start = match.index;
+  const end = start + digits.length;
+
+  if (digits.length >= 3) {
+    const rightmost3 = digits.slice(-3);
+    if (!used.has(rightmost3)) return rightmost3;
+  }
+  const anchor = digits.length >= 3 ? digits.slice(-2) : digits;
+  return findUniqueDigitPairLabel(candidate, anchor, start, end, used);
+}
+
+// § Label creation — completes a fixed 2-digit anchor into a unique
+// 3-character label by adding exactly one adjacent letter, checked
+// against the digit run's actual position in the full candidate string
+// (not the anchor's own possibly-shorter length, so a rightmost-2
+// fallback still looks for its leading/trailing letter outside the
+// *whole* original run, not just outside the 2 digits it's keeping).
+// Leading candidates are tried first, walking forward (left to right)
+// from the very start of the string toward the digits -- the earliest,
+// most identifying characters first -- and only once every leading
+// character is exhausted does the search move to trailing characters,
+// nearest-first (already the same left-to-right order, continuing past
+// the digits). Returns null if both directions are exhausted.
+function findUniqueDigitPairLabel(candidate, digitAnchor, start, end, used) {
+  for (let i = 0; i < start; i++) {
+    const label = candidate[i] + digitAnchor;
+    if (!used.has(label)) return label;
+  }
+  for (let i = end; i < candidate.length; i++) {
+    const label = digitAnchor + candidate[i];
+    if (!used.has(label)) return label;
+  }
+  return null;
 }
 
 // § Label creation, steps 4-5 — try the candidate string's first three
