@@ -60,21 +60,23 @@
 
   <dialog id="edit-map-dialog" aria-labelledby="edit-map-dialog-heading">
     <h3 id="edit-map-dialog-heading">Edit Map</h3>
-    <p>Uncheck a feature to remove it from the map at every scale. Unchecked features stay in this list and can be turned back on later.</p>
-    <fieldset id="edit-map-pois">
-      <legend><h4>POIs</h4></legend>
+    <details id="edit-map-pois">
+      <summary><h4>POIs</h4></summary>
       <div class="edit-map-list" id="edit-map-pois-list"></div>
-    </fieldset>
-    <fieldset id="edit-map-streets">
-      <legend><h4>Streets</h4></legend>
-      <div class="edit-map-list" id="edit-map-streets-list"></div>
-    </fieldset>
-    <fieldset id="edit-map-pedestrian">
-      <legend><h4>Pedestrian Pathways</h4></legend>
-      <div class="edit-map-list" id="edit-map-pedestrian-list"></div>
-    </fieldset>
-    <button id="btn-edit-map-save" type="button">Save</button>
-    <button id="btn-edit-map-cancel" type="button">Cancel</button>
+    </details>
+    <details id="edit-map-visible-streets">
+      <summary><h4>Visible Streets</h4></summary>
+      <div class="edit-map-list" id="edit-map-visible-streets-list"></div>
+    </details>
+    <details id="edit-map-hidden-features">
+      <summary><h4>Hidden Features</h4></summary>
+      <div class="edit-map-list" id="edit-map-hidden-features-list"></div>
+    </details>
+    <details id="edit-map-complexity">
+      <summary><h4>Map Complexity</h4></summary>
+      <div class="edit-map-list" id="edit-map-complexity-list"></div>
+    </details>
+    <button id="btn-edit-map-close" type="button">Close</button>
   </dialog>
 
   <dialog id="labels-dialog" aria-labelledby="labels-dialog-heading">
@@ -98,22 +100,6 @@
     </div>
     <button id="btn-labels-close" type="button">Close</button>
   </dialog>
-
-  <fieldset id="tuning-fields" hidden>
-    <legend>Experimental tuning (developer use only)</legend>
-    <div>
-      <label for="tuning-density-cell-size">Density cell size (display pixels)</label>
-      <input type="number" id="tuning-density-cell-size" min="1" step="1" value="20">
-    </div>
-    <div>
-      <label for="tuning-density-threshold">Density threshold (streets per cell)</label>
-      <input type="number" id="tuning-density-threshold" min="1" step="1" value="2">
-    </div>
-    <div>
-      <label for="tuning-carriageway-max-separation">Carriageway max separation (feet)</label>
-      <input type="number" id="tuning-carriageway-max-separation" min="1" step="1" value="200">
-    </div>
-  </fieldset>
 
   <footer>
     <p id="build-id">Build: __BUILD_TIME__</p>

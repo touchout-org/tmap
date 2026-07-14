@@ -156,7 +156,7 @@ body {
 
 /* § Editing the Map — each group's checkbox list scrolls on its own rather
    than letting the whole dialog grow unbounded when a map has many streets. */
-#edit-map-dialog fieldset {
+#edit-map-dialog details {
   border: 1px solid #ccc;
   border-radius: 4px;
   margin: 0.6rem 0;
@@ -168,33 +168,22 @@ body {
   overflow-y: auto;
 }
 
-#edit-map-dialog .edit-map-list div {
+/* § Editing the Map — h4 inside summary keeps each group heading-navigable
+   for screen readers while staying a native disclosure widget; the inline
+   override stops it from taking on default h4 block spacing/sizing next
+   to the triangle marker. */
+#edit-map-dialog summary h4 {
+  display: inline;
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+#edit-map-dialog .edit-map-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
   margin: 0.2rem 0;
-}
-
-/* § Experimental tuning fields — deliberately plain, dev-only surface, not
-   styled like the polished Settings dialog it may eventually fold into. */
-#tuning-fields {
-  border: 1px dashed #c9922a;
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
-}
-
-#tuning-fields legend {
-  color: #8a5a00;
-  font-size: 0.85rem;
-}
-
-#tuning-fields div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin: 0.3rem 0;
-}
-
-#tuning-fields input {
-  width: 6rem;
 }
 
 #message-display {
