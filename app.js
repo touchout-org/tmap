@@ -1243,9 +1243,25 @@ function stripVowelsPreservingSingleLetterWords(name) {
     .map((word) => {
       const lettersOnly = word.replace(/[^A-Za-z]/g, '');
       if (lettersOnly.length === 1 && LABEL_VOWELS.has(lettersOnly)) return word;
-      return [...word].filter((ch) => !LABEL_VOWELS.has(ch)).join('');
+      const vowelsStripped = [...word].filter((ch) => !LABEL_VOWELS.has(ch)).join('');
+      return compressDoubledLetters(vowelsStripped);
     })
     .join(' ');
+}
+
+// § Label creation, step 1 (cont.) — doubled letters are a wasted phonetic
+// cue for a 3-character abbreviation, so collapse each run of the same
+// letter (case-insensitively) down to one occurrence, e.g. "ddsn" ->
+// "dsn". Only consecutive runs collapse -- non-adjacent repeats (like the
+// two t's in "Strt") are left alone, since those aren't "doubled letters"
+// in the sense meant here.
+function compressDoubledLetters(s) {
+  let result = '';
+  for (const ch of s) {
+    const prev = result[result.length - 1];
+    if (!prev || prev.toLowerCase() !== ch.toLowerCase()) result += ch;
+  }
+  return result;
 }
 
 // § Label creation, steps 1-3 — the full candidate string a street's label

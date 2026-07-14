@@ -215,7 +215,7 @@ All labels are unique 3-character abbreviations created from the actual street n
 
 The abbreviation algorithm goes like this:
 
-1. Strip all vowels from the name, unless the vowel is a single-letter word in the name (such as "A Street" or "E. 12th St.").
+1. Strip all vowels from the name, unless the vowel is a single-letter word in the name (such as "A Street" or "E. 12th St."). Within each word, also collapse any run of the same letter down to a single occurrence (e.g. "Addison" -> "ddsn" -> "dsn") -- doubled letters are a wasted phonetic cue in a 3-character abbreviation. Only consecutive runs collapse; non-adjacent repeats of the same letter elsewhere in the word are left alone.
 2. Strip all spaces and punctuation from the name.
 3. Make all letters lowercase.
 4. Take the first three letters of the string and check for uniqueness.
