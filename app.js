@@ -1289,16 +1289,22 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
   // to the same 3-dot footprint as the tactile marker (see drawSquarePixels)
   // for a consistent visual/tactile scale.
   // § Editing the Map — a POI unchecked in the Edit Map dialog is skipped
-  // here, same as a hidden street above.
-  if (!hiddenPoiNames.has(lastAnchorName)) {
+  // here, same as a hidden street above. § Command / hotkey mapping — also
+  // skipped entirely while cursorOnlyMode (the 0 hotkey) is active, same
+  // as visibleWays()/visiblePois() -- these two checks are direct (not
+  // routed through visiblePois()) only because this loop needs to keep the
+  // anchor/additional marker-class distinction that function doesn't carry.
+  if (!cursorOnlyMode && !hiddenPoiNames.has(lastAnchorName)) {
     const anchorPoint = projectToSvg(anchorLat, anchorLon, bbox);
     group.appendChild(createPoiMarkerSvg(svgNs, anchorPoint.x, anchorPoint.y, 'anchor-poi'));
   }
 
-  for (const poi of additionalPois) {
-    if (hiddenPoiNames.has(poi.name)) continue;
-    const p = projectToSvg(poi.lat, poi.lon, bbox);
-    group.appendChild(createPoiMarkerSvg(svgNs, p.x, p.y, 'additional-poi'));
+  if (!cursorOnlyMode) {
+    for (const poi of additionalPois) {
+      if (hiddenPoiNames.has(poi.name)) continue;
+      const p = projectToSvg(poi.lat, poi.lon, bbox);
+      group.appendChild(createPoiMarkerSvg(svgNs, p.x, p.y, 'additional-poi'));
+    }
   }
 }
 
@@ -1810,14 +1816,16 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
 
   // § Editing the Map — a POI unchecked in the Edit Map dialog is skipped
   // here, same as on the on-screen SVG (see renderStreetsAndAnchor).
+  // § Command / hotkey mapping — also skipped entirely while cursorOnlyMode
+  // is active, same as that function.
   const anchor = project(anchorLat, anchorLon);
-  if (!hiddenPoiNames.has(lastAnchorName) &&
+  if (!cursorOnlyMode && !hiddenPoiNames.has(lastAnchorName) &&
       anchor.x >= rectX && anchor.x <= rectMaxX && anchor.y >= rectY && anchor.y <= rectMaxY) {
     drawSquarePixels(pixels, displayW, displayH, anchor.x, anchor.y);
   }
 
   for (const poi of additionalPois) {
-    if (hiddenPoiNames.has(poi.name)) continue;
+    if (cursorOnlyMode || hiddenPoiNames.has(poi.name)) continue;
     const p = project(poi.lat, poi.lon);
     if (p.x >= rectX && p.x <= rectMaxX && p.y >= rectY && p.y <= rectMaxY) {
       drawSquarePixels(pixels, displayW, displayH, p.x, p.y);
