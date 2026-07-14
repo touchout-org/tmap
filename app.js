@@ -1527,23 +1527,76 @@ function placeLabels(candidates, gridBounds, activeZones) {
   const placed = { top: [], right: [], bottom: [], left: [] };
   const labeledNames = new Set();
 
-  // § Braille labels — top/bottom zones are horizontally inset between
-  // the left/right zones (see drawLabelZoneRects), so their along-edge
-  // range is exactly the map's own width/height -- they never reach a
-  // corner. left/right zones, by contrast, render across the *full*
-  // display height, including the corners top/bottom are inset to avoid,
-  // so a label there can legitimately extend past the map's own top/
-  // bottom edge into that corner space. Expressed in the same map-
-  // relative coordinates as "along" (0 at the map's own top/left edge).
-  function alongRange(edge) {
-    if (edge === 'top' || edge === 'bottom') return { min: 0, max: gridBounds.width };
-    return { min: -gridBounds.offsetY, max: DOT_GRID_HEIGHT - gridBounds.offsetY };
+  // § Braille labels — the four corners are shared, contested space, not
+  // owned outright by any one zone: each corner is exactly one label's
+  // worth of physical room (LABEL_ZONE_DOT_COLS x LABEL_ZONE_DOT_ROWS),
+  // where the two zones meeting there could each place a label if the
+  // other doesn't. Only exists when *both* contributing zones are active
+  // -- if either is off, gridBounds already leaves no gap there.
+  function cornerBox(horizontalEdge, verticalEdge) {
+    return {
+      x0: verticalEdge === 'left' ? 0 : gridBounds.offsetX + gridBounds.width,
+      x1: verticalEdge === 'left' ? gridBounds.offsetX : DOT_GRID_WIDTH,
+      y0: horizontalEdge === 'top' ? 0 : gridBounds.offsetY + gridBounds.height,
+      y1: horizontalEdge === 'top' ? gridBounds.offsetY : DOT_GRID_HEIGHT
+    };
   }
 
-  function fits(edge, along, footprint) {
+  // Which corner (and its other contributing edge) a candidate would need
+  // to reach into, if its footprint extends past its own edge's map-sized
+  // core range. Returns null for the common case -- fits entirely within
+  // the map's own width/height, no corner involved.
+  function cornerNeeded(edge, along, footprint) {
     const half = footprint / 2;
-    const range = alongRange(edge);
-    if (along - half < range.min || along + half > range.max) return false;
+    if (edge === 'top' || edge === 'bottom') {
+      if (along - half < 0) return { horizontalEdge: edge, verticalEdge: 'left', neighbor: 'left' };
+      if (along + half > gridBounds.width) return { horizontalEdge: edge, verticalEdge: 'right', neighbor: 'right' };
+    } else {
+      if (along - half < 0) return { horizontalEdge: 'top', verticalEdge: edge, neighbor: 'top' };
+      if (along + half > gridBounds.height) return { horizontalEdge: 'bottom', verticalEdge: edge, neighbor: 'bottom' };
+    }
+    return null;
+  }
+
+  // A placed label's absolute (full-canvas) bounding box, for checking
+  // corner overlap against another edge's placements.
+  function placementBox(p) {
+    const half = p.footprint / 2;
+    if (p.edge === 'top' || p.edge === 'bottom') {
+      return {
+        x0: gridBounds.offsetX + p.along - half, x1: gridBounds.offsetX + p.along + half,
+        y0: p.edge === 'top' ? 0 : gridBounds.offsetY + gridBounds.height,
+        y1: p.edge === 'top' ? gridBounds.offsetY : DOT_GRID_HEIGHT
+      };
+    }
+    return {
+      x0: p.edge === 'left' ? 0 : gridBounds.offsetX + gridBounds.width,
+      x1: p.edge === 'left' ? gridBounds.offsetX : DOT_GRID_WIDTH,
+      y0: gridBounds.offsetY + p.along - half, y1: gridBounds.offsetY + p.along + half
+    };
+  }
+
+  function boxesOverlap(a, b) {
+    return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+  }
+
+  // § Braille labels — a candidate fits if: it either stays within its
+  // own edge's core range, or reaches into a corner that's still free (the
+  // neighbor zone is active and hasn't already placed something
+  // overlapping that corner -- since edges are processed in
+  // LABEL_EDGE_ORDER and nothing is ever un-placed, whichever of the two
+  // corner-sharing edges gets processed first effectively has "first
+  // crack" at it, exactly as tried-and-not-taken); and it keeps the usual
+  // whitespace gap from every other label already on its own edge.
+  function fits(edge, along, footprint) {
+    const corner = cornerNeeded(edge, along, footprint);
+    if (corner) {
+      if (!activeZones[corner.neighbor]) return false;
+      const box = cornerBox(corner.horizontalEdge, corner.verticalEdge);
+      for (const p of placed[corner.neighbor]) {
+        if (boxesOverlap(box, placementBox(p))) return false;
+      }
+    }
     for (const p of placed[edge]) {
       const gap = Math.abs(along - p.along) - (footprint / 2 + p.footprint / 2);
       if (gap < LABEL_WHITESPACE_DOTS) return false;
