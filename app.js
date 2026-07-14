@@ -1210,6 +1210,7 @@ function renderScene(viewportBbox) {
 
   if (viewportBbox) {
     renderStreetsAndAnchor(svgNs, viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon);
+    drawLabelContent(svgNs, computeLabelPlacements(), mapGridBounds());
     // Cursor is a single reused element, drawn last (on top). Only appended
     // once there's a real viewport/position -- cursorSvg.hidden doesn't
     // reliably suppress rendering for an SVG element, so keeping it out of
@@ -1520,9 +1521,117 @@ function computeLabelPlacements() {
   return placeLabels(candidates, gridBounds, labelZones);
 }
 
-// § Braille labels — draws each active zone as an empty bordered region
-// (see svgMapRect/mapGridBounds for the geometry). Label *content* is
-// Phase 4; these render as placeholders reserving the space per spec.
+// § Label placement — a label character's dot pattern within its own 2
+// (dot-column) x 3 (dot-row) cell, decoded from the same NABCC table used
+// for the message display (see NABCC below). Every character a label can
+// actually contain -- lowercase letters, digits, dash -- stays within
+// NABCC's low 6 bits (confirmed by inspection: none exceed 0x3F), so dots
+// 7/8 (bits 6/7) never apply here; this only decodes bits 0-5.
+// bit0=dot1(col0,row0) bit1=dot2(col0,row1) bit2=dot3(col0,row2)
+// bit3=dot4(col1,row0) bit4=dot5(col1,row1) bit5=dot6(col1,row2)
+const LABEL_DOT_BIT_POSITIONS = [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2]];
+
+function labelCharacterDots(ch) {
+  const code = ch.charCodeAt(0);
+  const byte = (code >= 0x20 && code <= 0x7E) ? NABCC[code - 0x20] : 0x00;
+  const dots = [];
+  for (let bit = 0; bit < 6; bit++) {
+    if (byte & (1 << bit)) dots.push(LABEL_DOT_BIT_POSITIONS[bit]);
+  }
+  return dots;
+}
+
+// § Label placement — converts one placed label into absolute dot-grid
+// coordinates (the full DOT_GRID_WIDTH/HEIGHT canvas, not map-relative)
+// for every "on" braille dot. A label's own 3 characters are always laid
+// out horizontally (left-to-right, 1-dot kerning between each pair) --
+// confirmed from the spec's zone-sizing math, where the *same* 8-dot
+// character span (2+1+2+1+2) makes up the left/right zones' width too,
+// meaning even a label on a vertical edge reads horizontally within its
+// own narrow strip; only the zone/label's *perpendicular* dimension
+// differs by edge (see labelFootprintDots). What differs here per edge is
+// just where that horizontal strip sits: spread along the edge and
+// pinned to the outer (non-map) side for top/bottom, or fixed near the
+// zone's own outer side and positioned along the edge by "along" for
+// left/right.
+const LABEL_CHAR_WIDTH_DOTS = 2;
+const LABEL_CHAR_HEIGHT_DOTS = 3;
+const LABEL_CHAR_KERNING_DOTS = 1;
+const LABEL_MAP_PADDING_DOTS = 2;
+
+function labelDotPositions(placement, gridBounds) {
+  const charSpan = LABEL_CHAR_WIDTH_DOTS * 3 + LABEL_CHAR_KERNING_DOTS * 2; // 8
+  const horizontal = placement.edge === 'top' || placement.edge === 'bottom';
+
+  let baseX, baseY;
+  if (horizontal) {
+    const centerX = gridBounds.offsetX + placement.along;
+    baseX = Math.round(centerX - charSpan / 2);
+    baseY = placement.edge === 'top'
+      ? 0
+      : gridBounds.offsetY + gridBounds.height + LABEL_MAP_PADDING_DOTS;
+  } else {
+    const centerY = gridBounds.offsetY + placement.along;
+    baseX = placement.edge === 'left'
+      ? 0
+      : gridBounds.offsetX + gridBounds.width + LABEL_MAP_PADDING_DOTS;
+    baseY = Math.round(centerY - LABEL_CHAR_HEIGHT_DOTS / 2);
+  }
+
+  const dots = [];
+  placement.label.split('').forEach((ch, i) => {
+    const charX = baseX + i * (LABEL_CHAR_WIDTH_DOTS + LABEL_CHAR_KERNING_DOTS);
+    for (const [col, row] of labelCharacterDots(ch)) {
+      dots.push({ x: charX + col, y: baseY + row });
+    }
+  });
+  return dots;
+}
+
+// § Braille labels — draws every placed label's actual braille dot
+// pattern into its zone, as small circles at each "on" dot's absolute
+// grid position (converted to SVG units the same way svgMapRect/
+// mapGridBounds do elsewhere). Deliberately mirrors what
+// drawLabelDotsToPixels draws into the tactile raster -- the on-screen
+// SVG and the physical device should always show the same pattern, same
+// as every other element on this map.
+function drawLabelContent(svgNs, placements, gridBounds) {
+  const group = document.createElementNS(svgNs, 'g');
+  for (const edge of LABEL_EDGE_ORDER) {
+    for (const placement of placements[edge]) {
+      for (const dot of labelDotPositions(placement, gridBounds)) {
+        const circle = document.createElementNS(svgNs, 'circle');
+        circle.setAttribute('cx', (dot.x * SVG_UNITS_PER_DOT + SVG_UNITS_PER_DOT / 2).toFixed(1));
+        circle.setAttribute('cy', (dot.y * SVG_UNITS_PER_DOT + SVG_UNITS_PER_DOT / 2).toFixed(1));
+        circle.setAttribute('r', (SVG_UNITS_PER_DOT * 0.35).toFixed(1));
+        circle.setAttribute('class', 'label-dot');
+        group.appendChild(circle);
+      }
+    }
+  }
+  mapSvg.appendChild(group);
+}
+
+// § Braille labels — same geometry as drawLabelContent, but drawn straight
+// into the tactile raster's pixel buffer instead of SVG circles. scaleX/
+// scaleY match the ones rasterizeMapToPixels already computes for
+// everything else, in case the connected device ever reports a
+// resolution other than the expected 60x40.
+function drawLabelDotsToPixels(pixels, w, h, placements, gridBounds, scaleX, scaleY) {
+  for (const edge of LABEL_EDGE_ORDER) {
+    for (const placement of placements[edge]) {
+      for (const dot of labelDotPositions(placement, gridBounds)) {
+        setGridPixel(pixels, w, h, Math.round(dot.x * scaleX), Math.round(dot.y * scaleY));
+      }
+    }
+  }
+}
+
+// § Braille labels — draws each active zone as a bordered region (see
+// svgMapRect/mapGridBounds for the geometry). Label content itself is
+// drawn separately, on top, by drawLabelContent -- this just reserves and
+// shows the zone's own space, so it still renders (empty) even before a
+// map is loaded or if a zone happens to have no labels placed in it.
 function drawLabelZoneRects(svgNs) {
   const leftW = labelZones.left ? LABEL_ZONE_DOT_COLS * SVG_UNITS_PER_DOT : 0;
   const rightW = labelZones.right ? LABEL_ZONE_DOT_COLS * SVG_UNITS_PER_DOT : 0;
@@ -2144,6 +2253,8 @@ function rasterizeMapToPixels(bbox, ways, anchorLat, anchorLon, displayW, displa
     const cy = clamp(rectY + cursor.y * scaleY, rectY + 1, rectY + rectH - 3);
     drawCursorPixels(pixels, displayW, displayH, cx, cy);
   }
+
+  drawLabelDotsToPixels(pixels, displayW, displayH, computeLabelPlacements(), b, scaleX, scaleY);
 
   return pixels;
 }

@@ -332,8 +332,8 @@ Priority tiers as set by the user on 2026-07-08:
 | OSM error reporting (Nominatim/Overpass failures surfaced to the message field) | Data acquisition | Resolved as P0: must be visible for debugging, even before the UX around it is polished |
 | Additional POIs + threshold-distance modal + POI list box | Adding POIs | |
 | Braille label zone toggles + viewbox resize/reposition | Labels — toggles | Must ship early — label-zone presence/absence changes the viewbox, so this is foundational to map rendering, not a late add-on |
-| Braille label abbreviation algorithm | Labels | Content generation can keep iterating after the zone infrastructure above ships |
-| Braille label placement geometry + overflow rule | Labels | Design complete — see [Label placement](#label-placement) (tier-based priority, 45-degree angle rule, 2-pixel whitespace rule, and the full placement algorithm); zones can still render with an unrefined/partial label selection while implementation matures |
+| ~~Braille label abbreviation algorithm~~ | Labels | Done — see [Label creation](#label-creation); prototyped in the OSM Data Mine experiment site first, then ported into DotTMAP |
+| ~~Braille label placement geometry + overflow rule~~ | Labels | Done — see [Label placement](#label-placement) (tier-based priority, 45-degree angle rule, 2-pixel whitespace rule, and the full placement algorithm), including the actual braille-dot rendering into the zones on both the on-screen SVG and the tactile raster |
 | Braille Labels dialog | Labels — toggles | |
 
 ### P1
@@ -388,8 +388,8 @@ Priority tiers as set by the user on 2026-07-08:
 
 **Phase 4 — Braille label content (builds on the Phase 1 zone infrastructure)**
 
-17. Label abbreviation algorithm + uniqueness tracking.
-18. ~~Label placement geometry and the label-overflow rule~~ — done: see [Label placement](#label-placement) for the full design (tier-based priority, 45-degree angle rule, 2-pixel whitespace rule, fixed edge processing order, and the final leftover-room pass).
+17. ~~Label abbreviation algorithm + uniqueness tracking.~~ — done: see [Label creation](#label-creation).
+18. ~~Label placement geometry and the label-overflow rule~~ — done, including actual rendering (not just design): see [Label placement](#label-placement) for the full algorithm (tier-based priority, 45-degree angle rule, 2-pixel whitespace rule, fixed edge processing order, and the final leftover-room pass) and the braille-dot rendering into both the on-screen SVG and the tactile raster.
 19. ~~Reconcile the Braille Labels dialog with the Settings checkboxes~~ — done: confirmed as one control (the dialog), mentioned redundantly in two places in this doc, not two separate controls.
 
 **Phase 5 — Accounts, persistence, polish, and other external dependencies**

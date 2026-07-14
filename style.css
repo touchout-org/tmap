@@ -131,11 +131,18 @@ body {
 }
 
 /* § Braille labels — zones render as empty bordered regions until label
-   content (Phase 4) exists. */
+   content exists. */
 #map .label-zone {
   fill: #eee;
   stroke: #bbb;
   stroke-dasharray: 4 2;
+}
+
+/* § Braille labels — one filled circle per "on" braille dot, same fill as
+   the POI markers so both read as solid/tactile against the label-zone's
+   lighter background. */
+#map .label-dot {
+  fill: #1a1a1a;
 }
 
 #controls-row {
