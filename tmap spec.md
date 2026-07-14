@@ -75,8 +75,14 @@ The following table specifies the functions that can be accessed from the app or
 | Toggle Labels Bottom | `k` | none |
 | Toggle Labels Left | `j` | none |
 | Toggle Labels Right | `l` | none |
+| Map Complexity: All streets and pathways | `1` | none |
+| Map Complexity: Simplified neighborhoods | `2` | none |
+| Map Complexity: Major streets | `3` | none |
+| Map Complexity: Major highways | `4` | none |
 
 Toggling a label setting from the keyboard reports the new state in the message field, in the form "top labels on/off" (etc.), which is mirrored to the Dot Pad message display. As with all message-display updates, the app-side field is the source of truth: it updates first, then pushes to the Dot Pad and triggers the ARIA live announcement — see [Message display architecture](#message-display-architecture).
+
+The 1-4 hotkeys jump straight to a Map Complexity level (see [Editing the Map](#editing-the-map)) without needing to open the Edit Map dialog, announcing "[level] visible." in the message field. If the dialog happens to be open, its Map Complexity radio button stays in sync no matter which path changed it.
 
 Cursor rows match the dot mapping already established in [Cursor and hit testing](#cursor-and-hit-testing) (reused from DotSVG). Toggle Labels Top and Bottom are added here to complete the set of 4 label positions (matching the left/right/top/bottom checkboxes in the shared Braille Labels dialog — see [Settings](#settings)).
 
@@ -223,7 +229,19 @@ As POIs are added to the map, the locations are added to a list box on the left 
 
 ## Editing the Map
 
-Clicking "Edit map..." opens a dialog with a list of all features, sorted alphabetically and grouped by POIs, Streets, and Pedestrian Pathways. Each group has a heading and its own list of features. Each feature has a checkbox, and everything is checked by default. Unchecking a feature removes it from the map at all scales, but doesn't remove it from the list — it can be turned back on later. This dialog has a Save button and a Cancel button. Cancel closes the window and rejects any changes. Save closes the dialog and puts changes into effect.
+Clicking "Edit map..." opens a dialog with four expandable, collapsible groups (native disclosure widgets, each with an `<h4>`-wrapped label so the group names stay heading-navigable while expanded): **POIs**, **Visible Streets**, **Hidden Features**, and **Map Complexity**. There is no Save/Cancel step — every action in this dialog takes effect immediately and is reflected on the map, the tactile raster, and the message field right away.
+
+**POIs** lists every POI currently visible on the map, sorted in the same order as the POI list box (anchor first, then additional POIs in the order they were added). Each item is a plain clickable button, not a checkbox — clicking a POI removes it from the map (and the POI list box) and moves it into Hidden Features. The message field announces "[POI name] removed."
+
+**Visible Streets** lists every street/pathway name currently on the map, alphabetically, regardless of class (there is no longer a separate Streets/Pedestrian Pathways split). Clicking a street removes it from the map at every scale and moves it into Hidden Features. The message field announces "[street name] removed."
+
+**Hidden Features** is a single shared list for everything currently hidden, whether it was a POI or a street — hidden POIs are listed first (in POI list order), hidden streets alphabetically after. Clicking an item here restores it to the map and moves it back to its home group (POIs or Visible Streets). The message field announces "[name] restored."
+
+Focus handling in all three of the above groups follows the same rule: after a click, focus stays in the group the item was just clicked from, landing on whichever item now occupies that same list position (the next item, or the previous one if it was last). Focus only jumps to the other group — landing on that specific item's button — if the group the click came from is now completely empty.
+
+**Map Complexity** is a mutually-exclusive radio group, not a membership list, with four levels from most to least detail: "All streets and pathways," "Simplified neighborhoods" (hides importance tiers 6–7), "Major streets" (hides tiers 5–7), "Major highways" (tier 1 only). Each level is a strict tier cutoff (every level is a subset of the one before it), and it is a completely independent filter from Visible/Hidden Streets — a street hidden by hand stays hidden at every complexity level, and changing complexity never un-hides or re-hides a manually-toggled street. Picking a level announces "[level] visible." in the message field. The 1-4 app hotkeys (see [Command / hotkey mapping](#command--hotkey-mapping)) jump directly to a level without opening the dialog.
+
+Historical note: an earlier version of this dialog used checkboxes with Save/Cancel staging, and an even earlier iteration of the underlying filtering was a fully automated pipeline (name-based roadway/pedestrian dedup, divided-road carriageway collapse, density-driven tier decluttering) with no manual override at all. Both were replaced during hands-on testing on the `experiment/manual-declutter` branch, in favor of the always-reversible, always-immediate model described above — see that branch's commit history if the earlier designs are ever worth revisiting.
 
 ## Braille Resources
 
@@ -373,7 +391,7 @@ Priority tiers as set by the user on 2026-07-08:
 | Feature | Category | Notes |
 |---|---|---|
 | Settings dialog (units, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. Distinct from the earlier, minimal [experimental tuning fields](#experimental-tuning-fields-early-development-only) for the decluttering/collapse parameters (Phase 2) — those ship before this full dialog does |
-| Edit Map dialog (feature checkboxes) | Map editing | |
+| ~~Edit Map dialog~~ | Map editing | Done, in a different shape than originally planned here — see [Editing the Map](#editing-the-map) |
 | Download to a local `.svg` file | Downloading | Distinct from full My Archives (P2) — no account needed |
 | Braille translator (multi-code: US uncontracted, contracted UEB) | Braille translation | Resolved: baseline 8-dot computer output ships early via the reused DotSVG module, no translator needed; building the full multi-code translator is phased into Phase 5 as an external dependency |
 | Large-scale street decluttering algorithm | Large-scale decluttering | Design complete — semantic tiers + measured grid density (see [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering)); ships with early edit fields for its tunable thresholds (see [Experimental tuning fields](#experimental-tuning-fields-early-development-only)) rather than hardcoded values |
@@ -415,7 +433,7 @@ Priority tiers as set by the user on 2026-07-08:
 **Phase 3 — POIs, editing, and download**
 
 14. Additional POIs, threshold-distance modal, POI list box and panning-on-select.
-15. Edit Map dialog (feature checkboxes, save/cancel).
+15. ~~Edit Map dialog~~ — done, though the final shape diverged substantially from this list's original "feature checkboxes, save/cancel" description during hands-on testing: see [Editing the Map](#editing-the-map) for the current POIs / Visible Streets / Hidden Features / Map Complexity design (clickable list items, no checkboxes, immediate effect, no Save/Cancel).
 16. Download to a local `.svg` file — no account dependency, so it doesn't need to wait for Phase 5.
 
 **Phase 4 — Braille label content (builds on the Phase 1 zone infrastructure)**

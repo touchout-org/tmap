@@ -168,6 +168,17 @@ body {
   overflow-y: auto;
 }
 
+/* § Editing the Map — h4 inside summary keeps each group heading-navigable
+   for screen readers while staying a native disclosure widget; the inline
+   override stops it from taking on default h4 block spacing/sizing next
+   to the triangle marker. */
+#edit-map-dialog summary h4 {
+  display: inline;
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
 #edit-map-dialog .edit-map-list button {
   display: block;
   width: 100%;
