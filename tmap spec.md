@@ -209,13 +209,29 @@ Braille labels on the graphics pad itself are a significant effort. There are a 
 
 Because the presence or absence of each label zone changes the viewbox's size and position, the toggle infrastructure itself (the four checkboxes, and the viewbox resizing/repositioning that reacts to them — see [Label placement](#label-placement) for the exact dot-column/row math) was built early, alongside core map rendering, rather than deferred to the end. The label *content* — which streets get labeled and where, abbreviation collision handling, the oblique-angle rule, the overflow rule, and the actual braille-dot rendering into the zones on both the on-screen SVG and the tactile raster — is now fully implemented too, following the design below.
 
+#### Feature name compacting
+
+A general-purpose utility, not specific to braille — it also feeds the planned SVG export's per-street metadata (see [Saving and exporting](#saving-and-exporting)). OSM's `name` tag is consistently the fully-expanded, non-abbreviated form of a street name (confirmed empirically against this project's own cached Overpass data: 1073 distinct named ways checked, zero already using an abbreviated suffix). Neither of OSM's other name-related fields reliably fixes this, so compacting is done directly from `name` with two purpose-built lookups, not sourced from an OSM tag:
+
+* `alt_name` is present on very few ways and isn't reserved for compact forms specifically — it can just as easily hold a genuinely different historical/alternate name for the street, not a shorter version of the same one, so it isn't safe to substitute blindly.
+* `tiger:name_type` (from the 2007 TIGER/Census import) is present on only around 60% of ways and is measurably inconsistent where it does exist — e.g. some ways named "...Drive" are tagged `Rd`, some named "...Street" are tagged `Blvd`. Useful as a hint, not trustworthy as a source of truth.
+
+Takes a street name, returns `{ stem, type }`:
+
+1. **Type suffix** — if the name's trailing word matches a known street-type word (Street, Avenue, Boulevard, Drive, Road, Lane, Court, Circle, Place, Terrace, Way, Highway, and similar), `type` becomes that word's standard abbreviation (St, Ave, Blvd, Dr, Rd, Ln, Ct, Cir, Pl, Ter, Way, Hwy, ...) and `stem` becomes the name with that trailing word removed. If nothing matches, `type` is empty and `stem` is the full name.
+2. **Ordinal numbers** — independently of the type-suffix step, any ordinal number word found within `stem` (First through at least the 90s, including compounds like "Twenty-First") is converted to its digit+suffix form (Ninth -> 9th, Twenty-First -> 21st). If none is found, `stem` is left as-is.
+
+Both steps degrade gracefully: a name with neither a recognized type suffix nor an ordinal word passes through completely unchanged (`stem` = the full name, `type` = empty) — nothing regresses for names this can't help with.
+
+**Feeds directly into [Label creation](#label-creation) below:** the label abbreviation algorithm's candidate string is now built from `stem` and `type` joined by a space, not the raw name directly — and not concatenated without a space either, since that would let the stem's last letter and the type's first letter spuriously look like part of the same word to the vowel-stripping/doubled-letter steps, which both operate per-word. "Ninth Street" compacts to stem="9th", type="St" -> combined "9th St", which the existing pipeline reduces straight to the label "9th" (nothing left to strip or collapse, and the first three characters are already unique on their own) — a dramatically better result than abbreviating the fully-spelled-out original ever could give.
+
 #### Label creation
 
-All labels are unique 3-character abbreviations created from the actual street name. No two streets on the map, even if they're not both being displayed currently, may have the same abbreviation. Labels are always in lowercase 8-dot computer braille, and only include alphanumerics — no punctuation except for a dash if necessary. The 3-character limit is hard and fast, no exceptions; if necessary, pad the end of the label with dashes.
+All labels are unique 3-character abbreviations created from the compacted street name (see [Feature name compacting](#feature-name-compacting) above). No two streets on the map, even if they're not both being displayed currently, may have the same abbreviation. Labels are always in lowercase 8-dot computer braille, and only include alphanumerics — no punctuation except for a dash if necessary. The 3-character limit is hard and fast, no exceptions; if necessary, pad the end of the label with dashes.
 
 The abbreviation algorithm goes like this:
 
-1. Strip all vowels from the name, unless the vowel is a single-letter word in the name (such as "A Street" or "E. 12th St."). Within each word, also collapse any run of the same letter down to a single occurrence (e.g. "Addison" -> "ddsn" -> "dsn") -- doubled letters are a wasted phonetic cue in a 3-character abbreviation. Only consecutive runs collapse; non-adjacent repeats of the same letter elsewhere in the word are left alone.
+1. Strip all vowels from the compacted name, unless the vowel is a single-letter word in the name (such as "A Street" or "E. 12th St."). Within each word, also collapse any run of the same letter down to a single occurrence (e.g. "Addison" -> "ddsn" -> "dsn") -- doubled letters are a wasted phonetic cue in a 3-character abbreviation. Only consecutive runs collapse; non-adjacent repeats of the same letter elsewhere in the word are left alone.
 2. Strip all spaces and punctuation from the name.
 3. Make all letters lowercase.
 4. Take the first three letters of the string and check for uniqueness.
