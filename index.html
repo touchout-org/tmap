@@ -60,27 +60,22 @@
 
   <dialog id="edit-map-dialog" aria-labelledby="edit-map-dialog-heading">
     <h3 id="edit-map-dialog-heading">Edit Map</h3>
-    <p>Changes take effect immediately.</p>
-    <fieldset id="edit-map-pois">
-      <legend><h4>POIs</h4></legend>
-      <p>Uncheck a POI to remove it from the map.</p>
+    <details id="edit-map-pois">
+      <summary>POIs</summary>
       <div class="edit-map-list" id="edit-map-pois-list"></div>
-    </fieldset>
-    <fieldset id="edit-map-visible-streets">
-      <legend><h4>Visible Streets</h4></legend>
-      <p>Uncheck a street to remove it from the map and move it to Hidden Streets.</p>
+    </details>
+    <details id="edit-map-visible-streets">
+      <summary>Visible Streets</summary>
       <div class="edit-map-list" id="edit-map-visible-streets-list"></div>
-    </fieldset>
-    <fieldset id="edit-map-hidden-streets">
-      <legend><h4>Hidden Streets</h4></legend>
-      <p>Check a street to restore it to the map and move it back to Visible Streets.</p>
+    </details>
+    <details id="edit-map-hidden-streets">
+      <summary>Hidden Streets</summary>
       <div class="edit-map-list" id="edit-map-hidden-streets-list"></div>
-    </fieldset>
-    <fieldset id="edit-map-complexity">
-      <legend><h4>Map Complexity</h4></legend>
-      <p>Sets how much of the map is shown by street importance. Independent of Visible/Hidden Streets above -- a street you've hidden by hand stays hidden at every complexity level.</p>
+    </details>
+    <details id="edit-map-complexity">
+      <summary>Map Complexity</summary>
       <div class="edit-map-list" id="edit-map-complexity-list"></div>
-    </fieldset>
+    </details>
     <button id="btn-edit-map-close" type="button">Close</button>
   </dialog>
 

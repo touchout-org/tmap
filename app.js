@@ -460,7 +460,7 @@ function toggleLabelZone(zone) {
 function setMapComplexity(index) {
   if (index === mapComplexityIndex) return;
   mapComplexityIndex = index;
-  setMessage(`Map complexity: ${MAP_COMPLEXITY_LEVELS[index].label}`);
+  setMessage(`${MAP_COMPLEXITY_LEVELS[index].label} visible.`);
   refreshMap();
   const radio = editMapComplexityList.querySelector(`input[value="${index}"]`);
   if (radio) radio.checked = true;
@@ -672,35 +672,38 @@ function renderStreetLists() {
   populateEditMapGroup(editMapHiddenStreetsList, hidden, hiddenStreetNames, 'edit-map-hidden-street');
 }
 
-// § Editing the Map — finds a street's checkbox wherever it currently
-// lives (Visible or Hidden Streets), used to restore focus to a checkbox
-// after it relocates between the two lists on toggle.
-function findStreetCheckboxByName(name) {
-  for (const list of [editMapVisibleStreetsList, editMapHiddenStreetsList]) {
-    const match = [...list.querySelectorAll('input[type="checkbox"]')].find((cb) => cb.dataset.name === name);
-    if (match) return match;
-  }
-  return null;
-}
-
 // § Editing the Map — a Visible/Hidden Streets checkbox takes effect the
 // instant it's toggled (no Save/Cancel step): updates hiddenStreetNames,
 // re-renders both lists so the row visibly moves to the other group, then
-// moves focus to the checkbox's new location so a screen reader user's
-// focus follows the item rather than landing on whatever now happens to
-// occupy its old DOM position.
+// moves focus. Focus stays in the section the checkbox was just toggled
+// from -- landing on whichever item now sits at the same position (i.e.
+// the next item, or the previous one if it was last) -- rather than
+// following the item to its new section, so repeatedly unchecking streets
+// in Visible Streets keeps focus moving through Visible Streets. Only
+// falls back to the other section's checkbox for this name if the
+// toggled-from section is now completely empty.
 function handleStreetCheckboxChange(event) {
   const checkbox = event.target;
   if (!checkbox.matches('input[type="checkbox"]')) return;
   const name = checkbox.dataset.name;
   const nowVisible = checkbox.checked;
+  const sourceList = nowVisible ? editMapHiddenStreetsList : editMapVisibleStreetsList;
+  const sourceIndex = [...sourceList.querySelectorAll('input[type="checkbox"]')].indexOf(checkbox);
+
   if (nowVisible) hiddenStreetNames.delete(name);
   else hiddenStreetNames.add(name);
   renderStreetLists();
   refreshMap();
-  setMessage(`${name} ${nowVisible ? 'shown' : 'hidden'}`);
-  const moved = findStreetCheckboxByName(name);
-  if (moved) moved.focus();
+  setMessage(`${name} ${nowVisible ? 'restored' : 'removed'}`);
+
+  const remaining = [...sourceList.querySelectorAll('input[type="checkbox"]')];
+  if (remaining.length > 0) {
+    remaining[Math.min(sourceIndex, remaining.length - 1)].focus();
+  } else {
+    const destList = nowVisible ? editMapVisibleStreetsList : editMapHiddenStreetsList;
+    const moved = [...destList.querySelectorAll('input[type="checkbox"]')].find((cb) => cb.dataset.name === name);
+    if (moved) moved.focus();
+  }
 }
 
 editMapVisibleStreetsList.addEventListener('change', handleStreetCheckboxChange);

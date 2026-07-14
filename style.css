@@ -156,7 +156,7 @@ body {
 
 /* § Editing the Map — each group's checkbox list scrolls on its own rather
    than letting the whole dialog grow unbounded when a map has many streets. */
-#edit-map-dialog fieldset {
+#edit-map-dialog details {
   border: 1px solid #ccc;
   border-radius: 4px;
   margin: 0.6rem 0;
