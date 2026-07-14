@@ -1219,6 +1219,307 @@ function renderScene(viewportBbox) {
   }
 }
 
+// § Braille labels / § Label creation — ported from the OSM Data Mine
+// experiment site's "Braille Labels" tab (experiment/app.js) once that
+// tab validated the algorithm against real Overpass data. See tmap
+// spec.md's Label creation section for the numbered steps this
+// implements. Operates on every name currently in lastWays (not
+// visibleWays()) -- per spec, "No two streets on the map, even if
+// they're not both being displayed currently, may have the same
+// abbreviation."
+const LABEL_VOWELS = new Set(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']);
+
+// § Label creation, step 1 — strip vowels from each word of the name,
+// except when a word (once its own punctuation is stripped) is a single
+// vowel letter on its own, e.g. "A Street" or "E. 12th St." -- those words
+// are kept whole. Runs on the original whitespace-separated words, since
+// word boundaries still need to exist for this check; spaces themselves
+// aren't removed until the next step.
+function stripVowelsPreservingSingleLetterWords(name) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const lettersOnly = word.replace(/[^A-Za-z]/g, '');
+      if (lettersOnly.length === 1 && LABEL_VOWELS.has(lettersOnly)) return word;
+      return [...word].filter((ch) => !LABEL_VOWELS.has(ch)).join('');
+    })
+    .join(' ');
+}
+
+// § Label creation, steps 1-3 — the full candidate string a street's label
+// is drawn from: vowels stripped (per the single-letter-word exception),
+// every space and punctuation character removed, lowercased.
+function labelCandidateString(name) {
+  const vowelsStripped = stripVowelsPreservingSingleLetterWords(name);
+  return vowelsStripped.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+}
+
+// § Label creation, steps 4-6 — assigns every street name a unique
+// 3-character label. Processes names in the given order (alphabetical, so
+// output is stable/reproducible run to run) -- uniqueness resolution is
+// first-come-first-served, so earlier names in the list get first claim
+// on their natural 3-letter window.
+function assignBrailleLabels(names) {
+  const used = new Set();
+  const labels = new Map();
+
+  for (const name of names) {
+    const candidate = labelCandidateString(name);
+    const label = findUniqueLabel(candidate, used) || findUniqueDigitSuffix(candidate, used);
+    used.add(label);
+    labels.set(name, label);
+  }
+
+  return labels;
+}
+
+// § Label creation, steps 4-5 — try the candidate string's first three
+// characters; on collision, keep the first two characters fixed and walk
+// only the third character forward through the rest of the candidate
+// string, rather than sliding the whole 3-character window. This keeps
+// same-prefix streets (e.g. "University Avenue"/"University Walk", or
+// "Virginia Gardens"/"Virginia Street") looking and feeling as similar as
+// the data allows -- only the one character that actually needs to differ
+// changes, instead of the whole label shifting to a different, unrelated
+// stretch of the name. A candidate shorter than 3 characters is padded
+// with dashes (the label's only allowed punctuation, per the Label
+// creation intro) rather than skipped -- there's nothing to walk through
+// in that case. Returns null if every remaining character collides too,
+// so the caller can fall through to the digit-suffix step.
+function findUniqueLabel(candidate, used) {
+  if (candidate.length < 3) {
+    const label = padLabel(candidate);
+    return used.has(label) ? null : label;
+  }
+  const prefix = candidate.slice(0, 2);
+  for (let i = 2; i < candidate.length; i++) {
+    const label = prefix + candidate[i];
+    if (!used.has(label)) return label;
+  }
+  return null;
+}
+
+function padLabel(s) {
+  return (s + '---').slice(0, 3);
+}
+
+// § Label creation, step 6 — every natural window collided, so fall back
+// to the candidate's first two characters (padded with a dash if the
+// candidate itself is shorter than 2 characters) plus a single trailing
+// digit, trying 0-9 in order until one is unique.
+function findUniqueDigitSuffix(candidate, used) {
+  const prefix = (candidate.slice(0, 2) + '-').slice(0, 2);
+  for (let digit = 0; digit <= 9; digit++) {
+    const label = prefix + String(digit);
+    if (!used.has(label)) return label;
+  }
+  // All 10 digits already taken by this exact prefix -- vanishingly
+  // unlikely for any real street list, but return a guaranteed-unique
+  // placeholder rather than a duplicate label.
+  let n = 0;
+  while (used.has(`?${n}`)) n++;
+  return `?${n}`;
+}
+
+// § Label placement — constants from tmap spec.md's placement rules. The
+// spec's "2 display-pixels" of whitespace and "less than 1cm visible"
+// minimum length are both expressed in this doc's own dot-grid units (a
+// "display-pixel" here means one dot, same as the zone-sizing math above)
+// -- "1cm" was pinned down to 4 dots specifically, not derived from a
+// physical dot-pitch spec (none exists in this codebase or the vendored
+// SDK; asked the user directly rather than guess a hardware number).
+const LABEL_WHITESPACE_DOTS = 2;
+const LABEL_ANGLE_THRESHOLD_DEGREES = 45;
+const MIN_LABEL_STREET_LENGTH_DOTS = 4;
+
+// § Label placement, step 1 — fixed edge processing order.
+const LABEL_EDGE_ORDER = ['top', 'right', 'bottom', 'left'];
+
+// § Label placement — a label's fixed footprint along the edge it's on:
+// 10 dots for top/bottom (see LABEL_ZONE_DOT_COLS -- a label reads
+// left-to-right within a horizontal zone), 5 dots for left/right (see
+// LABEL_ZONE_DOT_ROWS -- multiple labels stack top-to-bottom within a
+// vertical zone, each taking one zone-row's worth of height). These are
+// the same two constants that already size the zones themselves; a label
+// always exactly fills the zone's cross-dimension, so its along-edge
+// footprint is simply the other constant.
+function labelFootprintDots(edge) {
+  return edge === 'top' || edge === 'bottom' ? LABEL_ZONE_DOT_COLS : LABEL_ZONE_DOT_ROWS;
+}
+
+// § Label placement — which of the map rectangle's four edges (if any) a
+// map-relative grid point sits on. Checked in LABEL_EDGE_ORDER so a
+// (vanishingly unlikely) exact corner point resolves to one edge
+// consistently rather than being ambiguous.
+function edgeAtGridPoint(x, y, gridBounds) {
+  const EPSILON = 1e-6;
+  if (Math.abs(y) < EPSILON) return 'top';
+  if (Math.abs(x - gridBounds.width) < EPSILON) return 'right';
+  if (Math.abs(y - gridBounds.height) < EPSILON) return 'bottom';
+  if (Math.abs(x) < EPSILON) return 'left';
+  return null;
+}
+
+// § Label placement — every point where a way's geometry crosses one of
+// the map rectangle's four edges, using the same Liang-Barsky clip
+// already used for rendering (see clipSegmentToRect) -- a way's raw
+// geometry routinely continues well beyond the current viewport, so a
+// clipped segment endpoint that lands exactly on the rectangle boundary
+// (rather than ending strictly inside it) is a genuine "this street
+// continues past this edge" crossing. dx/dy is the crossing segment's own
+// direction (unaffected by clipping, which only truncates a segment's
+// length, not its slope), used for the angle rule.
+function findEdgeCrossings(way, viewportBbox, gridBounds) {
+  const crossings = [];
+  const geometry = way.geometry || [];
+  let prev = null;
+  for (const pt of geometry) {
+    const p = projectToGrid(pt.lat, pt.lon, viewportBbox);
+    if (prev) {
+      const dx = p.x - prev.x;
+      const dy = p.y - prev.y;
+      const clipped = clipSegmentToRect(prev.x, prev.y, p.x, p.y, 0, 0, gridBounds.width, gridBounds.height);
+      if (clipped && (dx !== 0 || dy !== 0)) {
+        for (const corner of [[clipped.x0, clipped.y0], [clipped.x1, clipped.y1]]) {
+          const edge = edgeAtGridPoint(corner[0], corner[1], gridBounds);
+          if (edge) crossings.push({ edge, x: corner[0], y: corner[1], dx, dy });
+        }
+      }
+    }
+    prev = p;
+  }
+  return crossings;
+}
+
+// § Label placement — "intersects the active edge at more than 45
+// degrees." Both top/bottom (horizontal) and left/right (vertical) edges
+// reduce to the same angle-from-horizontal measurement, just compared on
+// opposite sides of the 45-degree threshold: a street must run closer to
+// perpendicular than parallel to the edge it's crossing. Exactly 45
+// degrees fails on every edge, per the spec's "45 degrees or less" wording.
+function crossingAngleOk(crossing) {
+  const angleFromHorizontal = Math.atan2(Math.abs(crossing.dy), Math.abs(crossing.dx)) * 180 / Math.PI;
+  if (crossing.edge === 'top' || crossing.edge === 'bottom') {
+    return angleFromHorizontal > LABEL_ANGLE_THRESHOLD_DEGREES;
+  }
+  return angleFromHorizontal < LABEL_ANGLE_THRESHOLD_DEGREES;
+}
+
+// § Label placement — a way's total visible length within the map
+// rectangle, in dot-grid units, for the minimum-length rule. Sums only
+// the clipped (in-viewport) portion of each segment, same clip as
+// findEdgeCrossings.
+function visibleLengthDots(way, viewportBbox, gridBounds) {
+  const geometry = way.geometry || [];
+  let total = 0;
+  let prev = null;
+  for (const pt of geometry) {
+    const p = projectToGrid(pt.lat, pt.lon, viewportBbox);
+    if (prev) {
+      const clipped = clipSegmentToRect(prev.x, prev.y, p.x, p.y, 0, 0, gridBounds.width, gridBounds.height);
+      if (clipped) total += Math.hypot(clipped.x1 - clipped.x0, clipped.y1 - clipped.y0);
+    }
+    prev = p;
+  }
+  return total;
+}
+
+// § Label placement — every candidate label point across all four edges,
+// for every currently-visible way with an assigned label. A candidate
+// carries its own intrinsic pass/fail state (angle rule, minimum-length
+// rule) but not whitespace/dedup, which depend on what else gets placed
+// and are handled by placeLabels below. "along" is the crossing's position
+// along whichever axis that edge runs (x for top/bottom, y for left/right)
+// -- what step 2's left-to-right/top-to-bottom position ordering sorts by.
+function collectLabelCandidates(ways, viewportBbox, gridBounds, labels) {
+  const candidates = [];
+  for (const way of ways) {
+    const name = way.tags && way.tags.name;
+    if (!name || !labels.has(name)) continue;
+    const crossings = findEdgeCrossings(way, viewportBbox, gridBounds);
+    if (crossings.length === 0) continue;
+    if (visibleLengthDots(way, viewportBbox, gridBounds) < MIN_LABEL_STREET_LENGTH_DOTS) continue;
+    for (const crossing of crossings) {
+      if (!crossingAngleOk(crossing)) continue;
+      const along = crossing.edge === 'top' || crossing.edge === 'bottom' ? crossing.x : crossing.y;
+      candidates.push({ name, label: labels.get(name), tier: way.tier, edge: crossing.edge, along });
+    }
+  }
+  return candidates;
+}
+
+// § Label placement, steps 1-5 — the placement algorithm proper. Runs two
+// passes over the four edges in LABEL_EDGE_ORDER, walking tiers 1-7
+// (most to least important) within each edge and candidates in position
+// order within each tier: a primary pass that skips any street already
+// labeled on an earlier-processed edge (step 4, "at most one label"), then
+// a final pass over the same candidates without that restriction, filling
+// any room left over (step 5) -- which may duplicate an existing label or
+// give a first label to a street skipped everywhere in the primary pass.
+// Returns { top: [...], right: [...], bottom: [...], left: [...] }, each
+// entry { name, label, tier, edge, along, footprint }.
+function placeLabels(candidates, gridBounds, activeZones) {
+  const byEdge = { top: [], right: [], bottom: [], left: [] };
+  for (const c of candidates) byEdge[c.edge].push(c);
+
+  const placed = { top: [], right: [], bottom: [], left: [] };
+  const labeledNames = new Set();
+
+  function alongLimit(edge) {
+    return edge === 'top' || edge === 'bottom' ? gridBounds.width : gridBounds.height;
+  }
+
+  function fits(edge, along, footprint) {
+    const half = footprint / 2;
+    if (along - half < 0 || along + half > alongLimit(edge)) return false;
+    for (const p of placed[edge]) {
+      const gap = Math.abs(along - p.along) - (footprint / 2 + p.footprint / 2);
+      if (gap < LABEL_WHITESPACE_DOTS) return false;
+    }
+    return true;
+  }
+
+  function runPass(skipAlreadyLabeled) {
+    for (const edge of LABEL_EDGE_ORDER) {
+      if (!activeZones[edge]) continue;
+      for (let tier = 1; tier <= MAX_TIER; tier++) {
+        const tierCandidates = byEdge[edge]
+          .filter((c) => c.tier === tier)
+          .sort((a, b) => a.along - b.along);
+        for (const c of tierCandidates) {
+          if (skipAlreadyLabeled && labeledNames.has(c.name)) continue;
+          const footprint = labelFootprintDots(edge);
+          if (!fits(edge, c.along, footprint)) continue;
+          placed[edge].push({ ...c, footprint });
+          labeledNames.add(c.name);
+        }
+      }
+    }
+  }
+
+  runPass(true);
+  runPass(false);
+
+  return placed;
+}
+
+// § Label placement — top-level entry point: labels every street name
+// currently in lastWays (per spec, uniqueness spans the whole fetch, not
+// just what's visible), then places labels for whatever's actually
+// visible right now against the current viewport and active label zones.
+function computeLabelPlacements() {
+  if (!lastBbox) return { top: [], right: [], bottom: [], left: [] };
+  const allNames = Array.from(new Set(
+    lastWays.map((way) => way.tags && way.tags.name).filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+  const labels = assignBrailleLabels(allNames);
+  const viewportBbox = getViewportBbox();
+  const gridBounds = mapGridBounds();
+  const candidates = collectLabelCandidates(visibleWays(), viewportBbox, gridBounds, labels);
+  return placeLabels(candidates, gridBounds, labelZones);
+}
+
 // § Braille labels — draws each active zone as an empty bordered region
 // (see svgMapRect/mapGridBounds for the geometry). Label *content* is
 // Phase 4; these render as placeholders reserving the space per spec.

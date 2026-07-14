@@ -233,7 +233,7 @@ The Labels dialog has 4 checkboxes to place labels at the top, bottom, left, and
 * Labels must always be centered, either vertically or horizontally, on the point where the street intersects the closest active edge.
 * Street label priority uses the same [street importance tiers](#street-importance-tiers) established for large-scale decluttering (motorway/trunk highest, standalone footway/path lowest) — this replaces the earlier, separate "more segments wins" rule; segment count no longer factors into label priority.
 * Labels should only be applied to streets that intersect the active edge at more than 45 degrees. A street that intersects at 45 degrees or less never gets a label on that edge — it's likely to cross an adjacent edge at a more oblique angle, where a label is more appropriate.
-* Very short or stub streets (those with less than 1 cm visible in the current view) never get labels.
+* Very short or stub streets (those with less than 4 display-pixels visible in the current view -- roughly 1cm, and expressed in the same dot-grid units as the whitespace rule below rather than a physical measurement, since no physical dot-pitch spec exists to convert cm to dots precisely) never get labels.
 * There must be at least 2 display-pixels of whitespace between a label and the map, and between adjacent labels. This is the same spacing already reflected in the zone-sizing math below (the 2-dot-column and 2-dot-row padding figures).
 
 **Placement algorithm**, run after the map and its streets are otherwise finalized for the current view:
