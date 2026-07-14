@@ -57,6 +57,7 @@ from street numbering alone).
 | `1516 Hearst Ave, Berkeley, CA` | `1600 Hearst Ave, Berkeley, CA` (439 ft)<br>`1400 Hearst Ave, Berkeley, CA` (907 ft) | `1520 Walnut St, Berkeley, CA` (4710 ft) |
 | `2000 University Ave, Berkeley, CA` | `2100 University Ave, Berkeley, CA` (697 ft)<br>`2224 Shattuck Ave, Berkeley, CA` (1251 ft) | -- |
 | `261 6th Ave, Brooklyn, NY` | `592 Carroll St, Brooklyn, NY` (1207 ft)<br>`26 Garfield Pl, Brooklyn, NY` (1303 ft)<br>`851 President St, Brooklyn, NY` (1199 ft) | -- |
+| `560 Riverside Dr, New York, NY` | -- | -- |
 
 The four anchors are also all >0.5mi from *each other* (the three CA
 anchors are 3000-56000 ft apart from each other and obviously from
@@ -64,6 +65,14 @@ Brooklyn too), so any anchor doubles as a too-far POI relative to any of
 the others -- useful when you want the too-far target to itself already
 have a fully-populated, familiar map rather than one of the single-purpose
 too-far-only addresses above.
+
+`560 Riverside Dr, New York, NY` is a fifth, standalone anchor (no cached
+near/too-far POIs of its own) -- added specifically for its real street
+names, not for POI-flow testing: 22 numbered "West Nth Street" names plus
+several other direction-prefixed streets (East Drive, etc.), useful for
+exercising the label-abbreviation algorithm's compass-direction and
+ordinal-digit handling together against real data. See tmap spec.md's
+Label creation section.
 
 The Brooklyn set (Park Slope) is a genuine "all four fit on one map" test
 case, unlike the CA anchors' near-POIs: Carroll St, Garfield Pl, and

@@ -28,6 +28,12 @@ const LOCAL_TEST_DATA_FILES = {
   '1516 hearst ave, berkeley, ca': 'test-data/1516-hearst-ave-berkeley-ca.json',
   '2000 university ave, berkeley, ca': 'test-data/2000-university-ave-berkeley-ca.json',
   '261 6th ave, brooklyn, ny': 'test-data/261-6th-ave-brooklyn-ny.json',
+  // Standalone anchor, no cached near/too-far POIs -- added specifically for
+  // its real numbered "West Nth Street" + direction-word names (Manhattan's
+  // West Harlem), useful for label-abbreviation regression testing (compass
+  // direction abbreviation, ordinal digits, and street type all in one name
+  // at once). See tmap spec.md's Label creation section.
+  '560 riverside dr, new york, ny': 'test-data/560-riverside-dr-new-york-ny.json',
   // Near-POIs (within 0.5mi of the matching anchor above -- joins the
   // current map as an additional POI). See test-data/README.md for exact
   // measured distances.
@@ -1349,12 +1355,39 @@ function compactFeatureName(name) {
 // abbreviation."
 const LABEL_VOWELS = new Set(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']);
 
+// § Label creation — a stem's leading compass-direction word, fully
+// spelled out, is replaced with its short form before the stem is joined
+// to the type. Only the ones map to a value containing a vowel (e/o) --
+// "ne" and "se" -- so those two are the ones that need protecting from
+// the vowel-stripping step below; the rest (n, e, s, w, sw, nw) already
+// survive it untouched since they either have no vowel or are the
+// single-vowel-letter case that step already exempts.
+const DIRECTION_ABBREVIATIONS = {
+  north: 'n', northeast: 'ne', east: 'e', southeast: 'se',
+  south: 's', southwest: 'sw', west: 'w', northwest: 'nw'
+};
+const DIRECTION_ABBREVIATION_TOKENS = new Set(Object.values(DIRECTION_ABBREVIATIONS));
+
+// § Label creation — checks only the stem's first word (a street's own
+// descriptive name never legitimately contains a second, independent
+// direction word) against DIRECTION_ABBREVIATIONS; no match leaves the
+// stem untouched.
+function abbreviateLeadingDirection(stem) {
+  const words = stem.split(/\s+/);
+  const firstClean = words[0].replace(/[^A-Za-z]/g, '').toLowerCase();
+  const abbreviation = DIRECTION_ABBREVIATIONS[firstClean];
+  if (!abbreviation) return stem;
+  words[0] = abbreviation;
+  return words.join(' ');
+}
+
 // § Label creation, step 1 — strip vowels from each word of the name,
 // except when a word (once its own punctuation is stripped) is a single
-// vowel letter on its own, e.g. "A Street" or "E. 12th St." -- those words
-// are kept whole. Runs on the original whitespace-separated words, since
-// word boundaries still need to exist for this check; spaces themselves
-// aren't removed until the next step.
+// vowel letter on its own, e.g. "A Street" or "E. 12th St.", or is one of
+// the direction-abbreviation tokens above ("ne"/"se") -- those words are
+// kept whole. Runs on the original whitespace-separated words, since word
+// boundaries still need to exist for this check; spaces themselves aren't
+// removed until the next step.
 function stripVowelsPreservingSingleLetterWords(name) {
   return name
     .split(/\s+/)
@@ -1362,38 +1395,44 @@ function stripVowelsPreservingSingleLetterWords(name) {
     .map((word) => {
       const lettersOnly = word.replace(/[^A-Za-z]/g, '');
       if (lettersOnly.length === 1 && LABEL_VOWELS.has(lettersOnly)) return word;
-      const vowelsStripped = [...word].filter((ch) => !LABEL_VOWELS.has(ch)).join('');
-      return compressDoubledLetters(vowelsStripped);
+      if (DIRECTION_ABBREVIATION_TOKENS.has(lettersOnly.toLowerCase())) return word;
+      return [...word].filter((ch) => !LABEL_VOWELS.has(ch)).join('');
     })
     .join(' ');
 }
 
-// § Label creation, step 1 (cont.) — doubled letters are a wasted phonetic
-// cue for a 3-character abbreviation, so collapse each run of the same
-// letter (case-insensitively) down to one occurrence, e.g. "ddsn" ->
-// "dsn". Only consecutive runs collapse -- non-adjacent repeats (like the
-// two t's in "Strt") are left alone, since those aren't "doubled letters"
-// in the sense meant here.
-function compressDoubledLetters(s) {
+// § Label creation — collapses every run of 2+ identical consecutive
+// letters (case-insensitively) down to one occurrence, anywhere in the
+// string, including across what used to be the stem/type word boundary
+// now that they're concatenated rather than space-joined (e.g. "...t" +
+// "T..." collapses to one "t"). Digits are exempt -- a repeated digit
+// (the "11" in "11th") is real information, not a doubled-letter
+// artifact, so runs of the same digit are always left alone.
+function compressRepeatedLetters(s) {
   let result = '';
   for (const ch of s) {
     const prev = result[result.length - 1];
-    if (!prev || prev.toLowerCase() !== ch.toLowerCase()) result += ch;
+    const isDigit = ch >= '0' && ch <= '9';
+    if (!isDigit && prev && prev.toLowerCase() === ch.toLowerCase()) continue;
+    result += ch;
   }
   return result;
 }
 
 // § Label creation, steps 1-3 — the full candidate string a street's label
 // is drawn from: the name is compacted first (see Feature name
-// compacting -- stem/type joined by a space, not concatenated, so the
-// word-scoped steps below don't spuriously merge the stem/type boundary),
-// then vowels stripped (per the single-letter-word exception), every
-// space and punctuation character removed, and the result lowercased.
+// compacting), the stem's leading direction word (if any) is abbreviated,
+// stem and type are concatenated directly (not space-joined -- any
+// doubled letter at that boundary is meant to collapse, not be
+// protected), then vowels are stripped (per the single-letter-word /
+// direction-token exceptions), every space and punctuation character is
+// removed, repeated letters are compressed, and the result is lowercased.
 function labelCandidateString(name) {
   const { stem, type } = compactFeatureName(name);
-  const compacted = type ? `${stem} ${type}` : stem;
-  const vowelsStripped = stripVowelsPreservingSingleLetterWords(compacted);
-  return vowelsStripped.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+  const candidate = abbreviateLeadingDirection(stem) + type;
+  const vowelsStripped = stripVowelsPreservingSingleLetterWords(candidate);
+  const cleaned = vowelsStripped.replace(/[^A-Za-z0-9]/g, '');
+  return compressRepeatedLetters(cleaned).toLowerCase();
 }
 
 // § Label creation, steps 4-7 — assigns every street name a unique

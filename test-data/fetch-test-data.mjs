@@ -90,6 +90,10 @@ const cases = [
   { query: '1516 Hearst Ave, Berkeley, CA', file: '1516-hearst-ave-berkeley-ca.json' },
   { query: '2000 University Ave, Berkeley, CA', file: '2000-university-ave-berkeley-ca.json' },
   { query: '261 6th Ave, Brooklyn, NY', file: '261-6th-ave-brooklyn-ny.json' },
+  // Standalone -- no near/too-far POIs cached for this one. Added for its
+  // real numbered "West Nth Street" + direction-word names, useful for
+  // label-abbreviation regression testing.
+  { query: '560 Riverside Dr, New York, NY', file: '560-riverside-dr-new-york-ny.json' },
 
   // Near-POIs -- confirmed within 0.5mi of their anchor above (see README),
   // for testing "add an additional POI to the current map."

@@ -226,7 +226,7 @@ Takes a street name, returns `{ stem, type }`:
 
 Both steps degrade gracefully: a name with neither a recognized type suffix nor an ordinal word passes through completely unchanged (`stem` = the full name, `type` = empty) — nothing regresses for names this can't help with.
 
-**Feeds directly into [Label creation](#label-creation) below:** the label abbreviation algorithm's candidate string is now built from `stem` and `type` joined by a space, not the raw name directly — and not concatenated without a space either, since that would let the stem's last letter and the type's first letter spuriously look like part of the same word to the vowel-stripping/doubled-letter steps, which both operate per-word. "Ninth Street" compacts to stem="9th", type="St" -> combined "9th St", which the existing pipeline reduces straight to the label "9th" (nothing left to strip or collapse, and the first three characters are already unique on their own) — a dramatically better result than abbreviating the fully-spelled-out original ever could give.
+**Feeds directly into [Label creation](#label-creation) below and into [cursor hit-test messages](#cursor-and-hit-testing).** The two consumers join `stem` and `type` differently, deliberately: hit-test messages for a single current object space-join them ("9th" + " " + "St" -> "9th St"), so the vowel-stripping-style word logic that could apply to a spoken/brailled message never spuriously merges the boundary. Label creation instead concatenates them directly with no space, specifically so a doubled letter at that boundary collapses like any other doubled letter rather than being protected — see Label creation's own steps for the full reasoning.
 
 #### Label creation
 
@@ -234,13 +234,16 @@ All labels are unique 3-character abbreviations created from the compacted stree
 
 The abbreviation algorithm goes like this:
 
-1. Strip all vowels from the compacted name, unless the vowel is a single-letter word in the name (such as "A Street" or "E. 12th St."). Within each word, also collapse any run of the same letter down to a single occurrence (e.g. "Addison" -> "ddsn" -> "dsn") -- doubled letters are a wasted phonetic cue in a 3-character abbreviation. Only consecutive runs collapse; non-adjacent repeats of the same letter elsewhere in the word are left alone.
-2. Strip all spaces and punctuation from the name.
-3. Make all letters lowercase.
-4. Take the first three letters of the string and check for uniqueness.
-5. If not unique, keep the first two letters fixed and walk the third letter forward through the rest of the string, one character at a time, until a unique 3-letter abbreviation is found. This is a deliberate choice, confirmed against real examples during implementation: keeping the shared prefix intact and varying only the one character that actually needs to differ keeps related street names (e.g. "University Avenue"/"University Drive"/"University House Way", or "Virginia Gardens"/"Virginia Street") looking and feeling similar, rather than sliding the whole 3-letter window to a different, unrelated-looking stretch of the name.
-6. If step 5 exhausts the string without finding a unique label, try a different anchor: keep the first and last letters fixed and walk the *middle* letter forward through the string's interior characters instead.
-7. If step 6 exhausts the string too, keep the first two letters fixed and try single digits 0-9 as the third character instead.
+1. Take the compacted name's stem. If its first word is a fully-spelled-out compass direction (North, Northeast, East, Southeast, South, Southwest, West, Northwest), replace that word with its short form (n, ne, e, se, s, sw, w, nw respectively). A street's own descriptive name never legitimately contains a second, independent direction word, so only the stem's leading word is ever checked.
+2. Concatenate the (possibly direction-abbreviated) stem directly with the compacted type — no space at the join, unlike the space-joined form used for cursor hit-test messages. Any internal spaces the stem itself has (e.g. "Santa Fe") are still there at this point; only the stem/type boundary itself loses its separator.
+3. Strip all vowels, one word at a time (word boundaries are still whatever spaces remain from step 2), unless the word is a single-letter vowel word (such as "A" or "E.") or one of the two-letter direction abbreviations that contains a vowel ("ne", "se") — both are kept whole rather than stripped.
+4. Strip all remaining spaces and punctuation, collapsing the name to one continuous string.
+5. Collapse every run of 2 or more identical letters (case-insensitive) down to a single occurrence, anywhere in the string — including right at the former stem/type boundary, now that concatenation in step 2 no longer protects it. This is deliberate: a doubled letter there is exactly as wasteful a phonetic cue as a doubled letter anywhere else in the name. Runs of the same *digit* are exempt and always left alone — the "11" in "11th" is real information, not a doubled-letter artifact.
+6. Make all letters lowercase.
+7. Take the first three characters of the string and check for uniqueness.
+8. If not unique, keep the first two characters fixed and walk the third character forward through the rest of the string, one character at a time, until a unique 3-character abbreviation is found. This is a deliberate choice, confirmed against real examples during implementation: keeping the shared prefix intact and varying only the one character that actually needs to differ keeps related street names (e.g. "University Avenue"/"University Drive"/"University House Way", or "Virginia Gardens"/"Virginia Street") looking and feeling similar, rather than sliding the whole 3-character window to a different, unrelated-looking stretch of the name.
+9. If step 8 exhausts the string without finding a unique label, try a different anchor: keep the first and last characters fixed and walk the *middle* character forward through the string's interior characters instead.
+10. If step 9 exhausts the string too, keep the first two characters fixed and try single digits 0-9 as the third character instead.
 
 #### Label placement
 
