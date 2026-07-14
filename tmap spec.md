@@ -219,8 +219,8 @@ The abbreviation algorithm goes like this:
 2. Strip all spaces and punctuation from the name.
 3. Make all letters lowercase.
 4. Take the first three letters of the string and check for uniqueness.
-5. If not unique, step through the remaining letters of the string until a unique 3-letter abbreviation is found.
-6. If necessary, use single digits as the final character of the abbreviation to make unique labels.
+5. If not unique, keep the first two letters fixed and walk the third letter forward through the rest of the string, one character at a time, until a unique 3-letter abbreviation is found. This is a deliberate choice, confirmed against real examples during implementation: keeping the shared prefix intact and varying only the one character that actually needs to differ keeps related street names (e.g. "University Avenue"/"University Drive"/"University House Way", or "Virginia Gardens"/"Virginia Street") looking and feeling similar, rather than sliding the whole 3-letter window to a different, unrelated-looking stretch of the name.
+6. If step 5 exhausts the string without finding a unique label, keep the first two letters fixed and try single digits 0-9 as the third character instead.
 
 #### Label placement
 
