@@ -168,9 +168,118 @@ function renderResults(ways) {
   const view = getSelectedView();
   if (view === 'address') {
     renderAddressView(ways);
+  } else if (view === 'braille-labels') {
+    renderBrailleLabelsView(ways);
   } else {
     renderStandardView(ways, view);
   }
+}
+
+// § Label creation — testbed for tmap spec.md's abbreviation algorithm
+// ("Braille labels" > "Label creation"), ahead of building it into DotTMAP
+// itself. One flat list, "[street name] — [label]" per distinct street
+// name in the current fetch, so uniqueness/collision handling can be
+// checked against real Overpass data before the real placement/rendering
+// work starts.
+function renderBrailleLabelsView(ways) {
+  const groups = groupByStreetName(ways);
+  const names = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
+  const labels = assignBrailleLabels(names);
+
+  for (const name of names) {
+    const li = document.createElement('li');
+    li.textContent = `${name} — ${labels.get(name)}`;
+    streetList.appendChild(li);
+  }
+}
+
+const LABEL_VOWELS = new Set(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']);
+
+// § Label creation, step 1 — strip vowels from each word of the name,
+// except when a word (once its own punctuation is stripped) is a single
+// vowel letter on its own, e.g. "A Street" or "E. 12th St." -- those words
+// are kept whole. Runs on the original whitespace-separated words, since
+// word boundaries still need to exist for this check; spaces themselves
+// aren't removed until the next step.
+function stripVowelsPreservingSingleLetterWords(name) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const lettersOnly = word.replace(/[^A-Za-z]/g, '');
+      if (lettersOnly.length === 1 && LABEL_VOWELS.has(lettersOnly)) return word;
+      return [...word].filter((ch) => !LABEL_VOWELS.has(ch)).join('');
+    })
+    .join(' ');
+}
+
+// § Label creation, steps 1-3 — the full candidate string a street's label
+// is drawn from: vowels stripped (per the single-letter-word exception),
+// every space and punctuation character removed, lowercased.
+function labelCandidateString(name) {
+  const vowelsStripped = stripVowelsPreservingSingleLetterWords(name);
+  return vowelsStripped.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+}
+
+// § Label creation, steps 4-6 — assigns every street name a unique
+// 3-character label. Processes names in the given order (alphabetical, so
+// output is stable/reproducible run to run) -- uniqueness resolution is
+// first-come-first-served, so earlier names in the list get first claim
+// on their natural 3-letter window.
+function assignBrailleLabels(names) {
+  const used = new Set();
+  const labels = new Map();
+
+  for (const name of names) {
+    const candidate = labelCandidateString(name);
+    const label = findUniqueWindow(candidate, used) || findUniqueDigitSuffix(candidate, used);
+    used.add(label);
+    labels.set(name, label);
+  }
+
+  return labels;
+}
+
+// § Label creation, steps 4-5 — try the candidate string's first three
+// characters, then each subsequent 3-character window, in order, for one
+// not already claimed by an earlier street. A candidate shorter than 3
+// characters is padded with dashes (the label's only allowed punctuation,
+// per the Label creation intro) rather than skipped. Returns null if every
+// window in the candidate string collides, so the caller can fall through
+// to the digit-suffix step.
+function findUniqueWindow(candidate, used) {
+  const maxStart = Math.max(candidate.length - 3, 0);
+  for (let start = 0; start <= maxStart; start++) {
+    const label = padLabel(candidate.slice(start, start + 3));
+    if (!used.has(label)) return label;
+  }
+  if (candidate.length < 3) {
+    const label = padLabel(candidate);
+    if (!used.has(label)) return label;
+  }
+  return null;
+}
+
+function padLabel(s) {
+  return (s + '---').slice(0, 3);
+}
+
+// § Label creation, step 6 — every natural window collided, so fall back
+// to the candidate's first two characters (padded with a dash if the
+// candidate itself is shorter than 2 characters) plus a single trailing
+// digit, trying 0-9 in order until one is unique.
+function findUniqueDigitSuffix(candidate, used) {
+  const prefix = (candidate.slice(0, 2) + '-').slice(0, 2);
+  for (let digit = 0; digit <= 9; digit++) {
+    const label = prefix + String(digit);
+    if (!used.has(label)) return label;
+  }
+  // All 10 digits already taken by this exact prefix -- vanishingly
+  // unlikely for any real street list, but return a guaranteed-unique
+  // placeholder rather than a duplicate label.
+  let n = 0;
+  while (used.has(`?${n}`)) n++;
+  return `?${n}`;
 }
 
 function renderStandardView(ways, view) {
