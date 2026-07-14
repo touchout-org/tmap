@@ -1220,6 +1220,125 @@ function renderScene(viewportBbox) {
   }
 }
 
+// § Feature name compacting — general-purpose, not braille-specific (also
+// the intended source for the planned SVG export's compacted-name
+// metadata). OSM's `name` tag is consistently fully-expanded; neither
+// `alt_name` (can hold a genuinely different name, not just a shorter
+// form of the same one) nor `tiger:name_type` (only ~60% present in this
+// project's own cached data, and measurably inconsistent where it does
+// exist -- see tmap spec.md's Feature name compacting section) are
+// reliable enough to depend on, so both lookups here are hand-built
+// rather than sourced from an OSM tag. A starting/extensible set, not
+// claimed to be exhaustive.
+const STREET_TYPE_ABBREVIATIONS = {
+  alley: 'Aly',
+  avenue: 'Ave',
+  boulevard: 'Blvd',
+  circle: 'Cir',
+  court: 'Ct',
+  crescent: 'Cres',
+  drive: 'Dr',
+  expressway: 'Expy',
+  freeway: 'Fwy',
+  highway: 'Hwy',
+  lane: 'Ln',
+  loop: 'Loop',
+  parkway: 'Pkwy',
+  path: 'Path',
+  place: 'Pl',
+  plaza: 'Plz',
+  road: 'Rd',
+  row: 'Row',
+  square: 'Sq',
+  street: 'St',
+  terrace: 'Ter',
+  trail: 'Trl',
+  walk: 'Walk',
+  way: 'Way'
+};
+
+// § Feature name compacting — ordinal number words to digit+suffix form.
+// Three tables cover every ordinal a street name is realistically going
+// to contain: ones (First-Ninth), teens (Tenth-Nineteenth), and bare tens
+// (Twentieth, Thirtieth, ... Ninetieth) as single-word matches, plus
+// CARDINAL_TENS (Twenty, Thirty, ... Ninety) for detecting a tens+ones
+// compound like "Twenty-First" in convertOrdinalWords below. Anything
+// past the 90s (or any non-ordinal word) simply isn't in these tables and
+// passes through untouched -- no special-casing needed for that.
+const ORDINAL_ONES = {
+  first: '1st', second: '2nd', third: '3rd', fourth: '4th', fifth: '5th',
+  sixth: '6th', seventh: '7th', eighth: '8th', ninth: '9th'
+};
+const ORDINAL_TEENS = {
+  tenth: '10th', eleventh: '11th', twelfth: '12th', thirteenth: '13th',
+  fourteenth: '14th', fifteenth: '15th', sixteenth: '16th', seventeenth: '17th',
+  eighteenth: '18th', nineteenth: '19th'
+};
+const ORDINAL_TENS = {
+  twentieth: '20th', thirtieth: '30th', fortieth: '40th', fiftieth: '50th',
+  sixtieth: '60th', seventieth: '70th', eightieth: '80th', ninetieth: '90th'
+};
+const CARDINAL_TENS = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90
+};
+
+function ordinalWordToDigits(word) {
+  const lower = word.toLowerCase();
+  return ORDINAL_ONES[lower] || ORDINAL_TEENS[lower] || ORDINAL_TENS[lower] || null;
+}
+
+// § Feature name compacting — replaces the first ordinal number word (or
+// tens+ones compound, e.g. "Twenty-First", hyphenated or not) found in a
+// name with its digit+suffix form; everything else is returned untouched.
+// Stops at the first match -- a street name only ever has one ordinal in
+// practice (the street's own number), never several to find.
+function convertOrdinalWords(name) {
+  const tokens = name.split(/(\s+|-)/);
+  for (let i = 0; i < tokens.length; i++) {
+    const word = tokens[i];
+    if (!/^[A-Za-z]+$/.test(word)) continue;
+
+    const tensValue = CARDINAL_TENS[word.toLowerCase()];
+    if (tensValue !== undefined && i + 2 < tokens.length && /^(\s+|-)$/.test(tokens[i + 1])) {
+      const onesDigits = ordinalWordToDigits(tokens[i + 2]);
+      if (onesDigits) {
+        const suffix = onesDigits.replace(/^\d+/, '');
+        const combined = String(tensValue + parseInt(onesDigits, 10)) + suffix;
+        tokens.splice(i, 3, combined);
+        return tokens.join('');
+      }
+    }
+
+    const digits = ordinalWordToDigits(word);
+    if (digits) {
+      tokens[i] = digits;
+      return tokens.join('');
+    }
+  }
+  return name;
+}
+
+// § Feature name compacting — splits a name into { stem, type }: if the
+// name's trailing word is a recognized street-type word, type becomes its
+// standard abbreviation and stem is the name with that word removed;
+// otherwise type is empty and stem is the full name, unchanged.
+function splitStreetType(name) {
+  const words = name.trim().split(/\s+/);
+  const lastWordClean = words[words.length - 1].replace(/[^A-Za-z]/g, '').toLowerCase();
+  const abbreviation = STREET_TYPE_ABBREVIATIONS[lastWordClean];
+  if (!abbreviation) return { stem: name, type: '' };
+  return { stem: words.slice(0, -1).join(' '), type: abbreviation };
+}
+
+// § Feature name compacting — top-level entry point: splits off a
+// recognized street-type suffix, then converts any ordinal number word
+// within what's left. Both steps degrade gracefully (see above), so a
+// name with neither passes through with stem = the full name, type = ''.
+function compactFeatureName(name) {
+  const { stem, type } = splitStreetType(name);
+  return { stem: convertOrdinalWords(stem), type };
+}
+
 // § Braille labels / § Label creation — ported from the OSM Data Mine
 // experiment site's "Braille Labels" tab (experiment/app.js) once that
 // tab validated the algorithm against real Overpass data. See tmap
@@ -1265,10 +1384,15 @@ function compressDoubledLetters(s) {
 }
 
 // § Label creation, steps 1-3 — the full candidate string a street's label
-// is drawn from: vowels stripped (per the single-letter-word exception),
-// every space and punctuation character removed, lowercased.
+// is drawn from: the name is compacted first (see Feature name
+// compacting -- stem/type joined by a space, not concatenated, so the
+// word-scoped steps below don't spuriously merge the stem/type boundary),
+// then vowels stripped (per the single-letter-word exception), every
+// space and punctuation character removed, and the result lowercased.
 function labelCandidateString(name) {
-  const vowelsStripped = stripVowelsPreservingSingleLetterWords(name);
+  const { stem, type } = compactFeatureName(name);
+  const compacted = type ? `${stem} ${type}` : stem;
+  const vowelsStripped = stripVowelsPreservingSingleLetterWords(compacted);
   return vowelsStripped.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 }
 
