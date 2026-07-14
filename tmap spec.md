@@ -178,7 +178,7 @@ If a subsequent POI location is more than [threshold distance] away from the anc
 
 If a subsequent POI is less than [threshold distance] away, the new POI is added to the current map and the map pans to center that new POI. Panning behavior automatically happens, announcing the distance and direction from the anchor POI. Multiple additional POIs can be added to a single map.
 
-As POIs are added to the map, the locations are added to a list box on the left of the page. Selecting an item from the list box (or arrowing through the list) pans to that POI and triggers the related panning announcement.
+As POIs are added to the map, the locations are added to a list box on the left of the page. Selecting an item from the list box — live while arrowing through the options, or on a click — pans to that POI, moves the cursor there, and triggers the related panning announcement.
 
 ### Custom POIs
 
