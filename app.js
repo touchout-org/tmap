@@ -199,7 +199,7 @@ const btnEditMap = document.getElementById('btn-edit-map');
 const editMapDialog = document.getElementById('edit-map-dialog');
 const editMapPoisList = document.getElementById('edit-map-pois-list');
 const editMapVisibleStreetsList = document.getElementById('edit-map-visible-streets-list');
-const editMapHiddenStreetsList = document.getElementById('edit-map-hidden-streets-list');
+const editMapHiddenFeaturesList = document.getElementById('edit-map-hidden-features-list');
 const editMapComplexityList = document.getElementById('edit-map-complexity-list');
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
 
@@ -630,100 +630,141 @@ function collectStreetNames() {
   return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
-// § Editing the Map — fills one group's list with a checkbox per feature
-// name, checked unless the name is in hiddenNames. Each checkbox carries
-// its feature name in a data attribute so a change handler can read it
-// back without needing a parallel index.
-function populateEditMapGroup(listContainer, names, hiddenNames, idPrefix) {
+// § Editing the Map — fills one group's list with a clickable button per
+// item (no checkboxes -- section membership alone conveys visible/hidden
+// state, so a checkbox would be redundant). Each item is { name, kind };
+// kind is only meaningful in Hidden Features (see collectHiddenFeatures),
+// where it's needed to route a restore back to the right home section.
+function populateEditMapButtons(listContainer, items, idPrefix) {
   listContainer.innerHTML = '';
-  if (names.length === 0) {
+  if (items.length === 0) {
     const none = document.createElement('p');
     none.textContent = '(none)';
     listContainer.appendChild(none);
     return;
   }
-  names.forEach((name, index) => {
-    const id = `${idPrefix}-${index}`;
-    const row = document.createElement('div');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.id = id;
-    checkbox.checked = !hiddenNames.has(name);
-    checkbox.dataset.name = name;
-    const label = document.createElement('label');
-    label.htmlFor = id;
-    label.textContent = name;
-    row.appendChild(checkbox);
-    row.appendChild(label);
-    listContainer.appendChild(row);
+  items.forEach(({ name, kind }, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = `${idPrefix}-${index}`;
+    button.textContent = name;
+    button.dataset.name = name;
+    if (kind) button.dataset.kind = kind;
+    listContainer.appendChild(button);
   });
 }
 
-// § Editing the Map — (re)renders both Streets groups from hiddenStreetNames
-// -- a name lives in exactly one of the two lists at a time, never both.
-// Called on dialog open and after every toggle, so unchecking a name in
-// Visible Streets makes it reappear checked in Hidden Streets (and vice
-// versa) immediately, not just on next open.
-function renderStreetLists() {
-  const allNames = collectStreetNames();
-  const visible = allNames.filter((name) => !hiddenStreetNames.has(name));
-  const hidden = allNames.filter((name) => hiddenStreetNames.has(name));
-  populateEditMapGroup(editMapVisibleStreetsList, visible, hiddenStreetNames, 'edit-map-visible-street');
-  populateEditMapGroup(editMapHiddenStreetsList, hidden, hiddenStreetNames, 'edit-map-hidden-street');
+function editMapButtons(listContainer) {
+  return [...listContainer.querySelectorAll('button')];
 }
 
-// § Editing the Map — a Visible/Hidden Streets checkbox takes effect the
-// instant it's toggled (no Save/Cancel step): updates hiddenStreetNames,
-// re-renders both lists so the row visibly moves to the other group, then
-// moves focus. Focus stays in the section the checkbox was just toggled
-// from -- landing on whichever item now sits at the same position (i.e.
-// the next item, or the previous one if it was last) -- rather than
-// following the item to its new section, so repeatedly unchecking streets
-// in Visible Streets keeps focus moving through Visible Streets. Only
-// falls back to the other section's checkbox for this name if the
-// toggled-from section is now completely empty.
-function handleStreetCheckboxChange(event) {
-  const checkbox = event.target;
-  if (!checkbox.matches('input[type="checkbox"]')) return;
-  const name = checkbox.dataset.name;
-  const nowVisible = checkbox.checked;
-  const sourceList = nowVisible ? editMapHiddenStreetsList : editMapVisibleStreetsList;
-  const sourceIndex = [...sourceList.querySelectorAll('input[type="checkbox"]')].indexOf(checkbox);
-
-  if (nowVisible) hiddenStreetNames.delete(name);
-  else hiddenStreetNames.add(name);
-  renderStreetLists();
-  refreshMap();
-  setMessage(`${name} ${nowVisible ? 'restored' : 'removed'}`);
-
-  const remaining = [...sourceList.querySelectorAll('input[type="checkbox"]')];
+// § Editing the Map — after a toggle, focus stays in the section it came
+// from, landing on whatever item now sits at the same position (the next
+// item, or the previous one if it was last) -- not on the item's new
+// location. Only falls back to destList (focusing this name's button
+// there) if sourceList is now completely empty. Shared by POIs, Visible
+// Streets, and Hidden Features so all three sections behave the same way.
+function focusAfterEditMapToggle(sourceList, sourceIndex, destList, name) {
+  const remaining = editMapButtons(sourceList);
   if (remaining.length > 0) {
     remaining[Math.min(sourceIndex, remaining.length - 1)].focus();
   } else {
-    const destList = nowVisible ? editMapVisibleStreetsList : editMapHiddenStreetsList;
-    const moved = [...destList.querySelectorAll('input[type="checkbox"]')].find((cb) => cb.dataset.name === name);
+    const moved = editMapButtons(destList).find((b) => b.dataset.name === name);
     if (moved) moved.focus();
   }
 }
 
-editMapVisibleStreetsList.addEventListener('change', handleStreetCheckboxChange);
-editMapHiddenStreetsList.addEventListener('change', handleStreetCheckboxChange);
-
-// § Editing the Map — a POI checkbox stays in the same list either way (no
-// relocation, unlike Streets), so it just needs its own state updated and
-// the map/POI dropdown refreshed -- no re-render of the list itself.
-function handlePoiCheckboxChange(event) {
-  const checkbox = event.target;
-  if (!checkbox.matches('input[type="checkbox"]')) return;
-  const name = checkbox.dataset.name;
-  if (checkbox.checked) hiddenPoiNames.delete(name);
-  else hiddenPoiNames.add(name);
-  renderPoiList();
-  refreshMap();
-  setMessage(`${name} ${checkbox.checked ? 'shown' : 'hidden'}`);
+// § Editing the Map — currently-visible POIs, as buttons for the POIs
+// section. Re-run after any POI hide/restore.
+function renderEditMapPois() {
+  const items = allPois().filter((poi) => !hiddenPoiNames.has(poi.name)).map((poi) => ({ name: poi.name }));
+  populateEditMapButtons(editMapPoisList, items, 'edit-map-poi');
 }
 
-editMapPoisList.addEventListener('change', handlePoiCheckboxChange);
+// § Editing the Map — currently-visible streets, as buttons for the
+// Visible Streets section. Re-run after any street hide/restore.
+function renderVisibleStreets() {
+  const items = collectStreetNames().filter((name) => !hiddenStreetNames.has(name)).map((name) => ({ name }));
+  populateEditMapButtons(editMapVisibleStreetsList, items, 'edit-map-visible-street');
+}
+
+// § Editing the Map — Hidden Features combines hidden POIs and hidden
+// streets into one list (per user request -- a shared destination for
+// anything hidden, not two parallel hidden-POIs/hidden-streets sections).
+// Hidden POIs are listed first (in their normal POI order -- anchor, then
+// additional POIs in add order), hidden streets alphabetically after.
+function renderHiddenFeatures() {
+  const hiddenPois = allPois()
+    .filter((poi) => hiddenPoiNames.has(poi.name))
+    .map((poi) => ({ name: poi.name, kind: 'poi' }));
+  const hiddenStreets = collectStreetNames()
+    .filter((name) => hiddenStreetNames.has(name))
+    .map((name) => ({ name, kind: 'street' }));
+  populateEditMapButtons(editMapHiddenFeaturesList, [...hiddenPois, ...hiddenStreets], 'edit-map-hidden-feature');
+}
+
+// § Editing the Map — clicking a visible POI removes it: hides it (moves
+// it into Hidden Features), refreshes the map and the on-screen POI
+// dropdown, and applies the shared focus rule above.
+function handlePoiButtonClick(event) {
+  const button = event.target;
+  if (!button.matches('button')) return;
+  const name = button.dataset.name;
+  const sourceIndex = editMapButtons(editMapPoisList).indexOf(button);
+  hiddenPoiNames.add(name);
+  renderEditMapPois();
+  renderHiddenFeatures();
+  renderPoiList();
+  refreshMap();
+  setMessage(`${name} removed`);
+  focusAfterEditMapToggle(editMapPoisList, sourceIndex, editMapHiddenFeaturesList, name);
+}
+
+editMapPoisList.addEventListener('click', handlePoiButtonClick);
+
+// § Editing the Map — clicking a visible street removes it: hides it
+// (moves it into Hidden Features), refreshes the map, and applies the
+// shared focus rule above.
+function handleVisibleStreetButtonClick(event) {
+  const button = event.target;
+  if (!button.matches('button')) return;
+  const name = button.dataset.name;
+  const sourceIndex = editMapButtons(editMapVisibleStreetsList).indexOf(button);
+  hiddenStreetNames.add(name);
+  renderVisibleStreets();
+  renderHiddenFeatures();
+  refreshMap();
+  setMessage(`${name} removed`);
+  focusAfterEditMapToggle(editMapVisibleStreetsList, sourceIndex, editMapHiddenFeaturesList, name);
+}
+
+editMapVisibleStreetsList.addEventListener('click', handleVisibleStreetButtonClick);
+
+// § Editing the Map — clicking a Hidden Features item restores it to its
+// home section (POIs or Visible Streets, per its kind), refreshes the map
+// (and the POI dropdown, for a POI), and applies the shared focus rule.
+function handleHiddenFeatureButtonClick(event) {
+  const button = event.target;
+  if (!button.matches('button')) return;
+  const name = button.dataset.name;
+  const kind = button.dataset.kind;
+  const sourceIndex = editMapButtons(editMapHiddenFeaturesList).indexOf(button);
+  if (kind === 'poi') {
+    hiddenPoiNames.delete(name);
+    renderEditMapPois();
+    renderPoiList();
+  } else {
+    hiddenStreetNames.delete(name);
+    renderVisibleStreets();
+  }
+  renderHiddenFeatures();
+  refreshMap();
+  setMessage(`${name} restored`);
+  const destList = kind === 'poi' ? editMapPoisList : editMapVisibleStreetsList;
+  focusAfterEditMapToggle(editMapHiddenFeaturesList, sourceIndex, destList, name);
+}
+
+editMapHiddenFeaturesList.addEventListener('click', handleHiddenFeatureButtonClick);
 
 // § Editing the Map — Map Complexity radio group, one row per
 // MAP_COMPLEXITY_LEVELS entry (see setMapComplexity for what picking one
@@ -757,12 +798,13 @@ editMapComplexityList.addEventListener('change', (event) => {
 // § Editing the Map — rebuilt from current map data every time the dialog
 // opens, so it always reflects whatever's actually on the map (including
 // features added since the dialog was last open). No Save/Cancel step --
-// every checkbox/radio here applies immediately (see handleStreetCheckbox
-// Change, handlePoiCheckboxChange, setMapComplexity).
+// every button/radio here applies immediately (see handlePoiButtonClick,
+// handleVisibleStreetButtonClick, handleHiddenFeatureButtonClick,
+// setMapComplexity).
 function openEditMapDialog() {
-  const poiNames = allPois().map((poi) => poi.name).sort((a, b) => a.localeCompare(b));
-  populateEditMapGroup(editMapPoisList, poiNames, hiddenPoiNames, 'edit-map-poi');
-  renderStreetLists();
+  renderEditMapPois();
+  renderVisibleStreets();
+  renderHiddenFeatures();
   populateEditMapComplexity(editMapComplexityList);
   editMapDialog.showModal();
 }
