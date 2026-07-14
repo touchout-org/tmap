@@ -207,7 +207,7 @@ We have figured out a lot about how to represent braille on the Dot Pad from the
 
 Braille labels on the graphics pad itself are a significant effort. There are a number of requirements around label creation and placement. When labels are turned on, they also significantly impact the size and dimensions of the SVG viewbox.
 
-Because the presence or absence of each label zone changes the viewbox's size and position, the toggle infrastructure itself (the four checkboxes, and the viewbox resizing/repositioning that reacts to them — see [Label placement](#label-placement) for the exact dot-column/row math) needs to be built early, alongside core map rendering, rather than deferred to the end. The label *content* — which streets get labeled and where, abbreviation collision handling, the oblique-angle rule, the overflow rule — can keep iterating after that: it's fine for a label zone to render empty, or with a partial/unrefined selection of labels, while that logic matures.
+Because the presence or absence of each label zone changes the viewbox's size and position, the toggle infrastructure itself (the four checkboxes, and the viewbox resizing/repositioning that reacts to them — see [Label placement](#label-placement) for the exact dot-column/row math) was built early, alongside core map rendering, rather than deferred to the end. The label *content* — which streets get labeled and where, abbreviation collision handling, the oblique-angle rule, the overflow rule, and the actual braille-dot rendering into the zones on both the on-screen SVG and the tactile raster — is now fully implemented too, following the design below.
 
 #### Label creation
 
@@ -240,10 +240,10 @@ The Labels dialog has 4 checkboxes to place labels at the top, bottom, left, and
 **Placement algorithm**, run after the map and its streets are otherwise finalized for the current view:
 
 1. Process the four active edges in a fixed order: top, right, bottom, left. An edge the user has turned off via its checkbox is skipped entirely.
-2. Within each edge, walk street-importance tiers from most to least important. Within a tier, place candidate labels in position order — left-to-right along the top/bottom edges, top-to-bottom along the left/right edges.
-3. A candidate is skipped on this edge if it can't fit — it violates the 2-pixel whitespace rule against the map or an already-placed label, or it fails the angle or minimum-length rule above.
+2. Within each edge, walk street-importance tiers from most to least important. Within a tier, place candidate labels ordered by visible segment count (more wins), then by position — left-to-right along the top/bottom edges, top-to-bottom along the left/right edges — as the final, deterministic tie-break.
+3. A candidate is skipped on this edge if it can't fit — it violates the angle rule above, or the 2-pixel whitespace rule against the map, an already-placed label on this edge, or a corner already claimed by the adjacent edge sharing it (see the corner-sharing rule above).
 4. A street already labeled on an earlier-processed edge is skipped on every later edge — the primary pass gives each street at most one label, on whichever eligible edge is processed first.
-5. **Final pass:** once all four edges have been walked once, make one more pass around them in the same order, filling any leftover room. This pass isn't limited to duplicating existing labels — it can also give a first label to a street that was skipped everywhere in the primary pass. Any candidate that fits the remaining space is eligible, still worked in tier order.
+5. **Final pass:** once all four edges have been walked once, make one more pass around them in the same order, filling any leftover room. This pass isn't limited to duplicating existing labels — it can also give a first label to a street that was skipped everywhere in the primary pass. Any candidate that fits the remaining space is eligible, still worked in tier and segment-count order.
 
 Since all labels are exactly 3 characters, the left and right label columns need exactly 10 dot columns each: 2 dot columns per character x 3 characters = 6, plus 1 column of kerning between characters 1–2 and 2–3 = 2, plus 2 dot columns of padding between the label and the viewbox = 10 total. The horizontal labels at top and bottom need exactly 5 dot rows: 3 for the braille dots, plus 2 for the padding between the text and the graphic.
 
