@@ -1324,15 +1324,11 @@ function findUniqueDigitSuffix(candidate, used) {
 }
 
 // § Label placement — constants from tmap spec.md's placement rules. The
-// spec's "2 display-pixels" of whitespace and "less than 1cm visible"
-// minimum length are both expressed in this doc's own dot-grid units (a
-// "display-pixel" here means one dot, same as the zone-sizing math above)
-// -- "1cm" was pinned down to 4 dots specifically, not derived from a
-// physical dot-pitch spec (none exists in this codebase or the vendored
-// SDK; asked the user directly rather than guess a hardware number).
+// spec's "2 display-pixels" of whitespace is expressed in this doc's own
+// dot-grid units (a "display-pixel" here means one dot, same as the
+// zone-sizing math above).
 const LABEL_WHITESPACE_DOTS = 2;
 const LABEL_ANGLE_THRESHOLD_DEGREES = 45;
-const MIN_LABEL_STREET_LENGTH_DOTS = 4;
 
 // § Label placement, step 1 — fixed edge processing order.
 const LABEL_EDGE_ORDER = ['top', 'right', 'bottom', 'left'];
@@ -1407,44 +1403,68 @@ function crossingAngleOk(crossing) {
   return angleFromHorizontal < LABEL_ANGLE_THRESHOLD_DEGREES;
 }
 
-// § Label placement — a way's total visible length within the map
-// rectangle, in dot-grid units, for the minimum-length rule. Sums only
-// the clipped (in-viewport) portion of each segment, same clip as
-// findEdgeCrossings.
-function visibleLengthDots(way, viewportBbox, gridBounds) {
+// § Label placement — whether any part of a way's geometry is actually
+// visible within the current map rectangle (as opposed to passing nearby
+// or only appearing in the wider fetch square) -- used by
+// visibleSegmentCounts below. Same clip as findEdgeCrossings, just
+// checking for any intersection at all rather than collecting crossing
+// points.
+function wayHasVisiblePortion(way, viewportBbox, gridBounds) {
   const geometry = way.geometry || [];
-  let total = 0;
   let prev = null;
   for (const pt of geometry) {
     const p = projectToGrid(pt.lat, pt.lon, viewportBbox);
     if (prev) {
-      const clipped = clipSegmentToRect(prev.x, prev.y, p.x, p.y, 0, 0, gridBounds.width, gridBounds.height);
-      if (clipped) total += Math.hypot(clipped.x1 - clipped.x0, clipped.y1 - clipped.y0);
+      if (clipSegmentToRect(prev.x, prev.y, p.x, p.y, 0, 0, gridBounds.width, gridBounds.height)) return true;
     }
     prev = p;
   }
-  return total;
+  return false;
+}
+
+// § Label placement — how many of a street's own way-segments have any
+// part visible in the current viewport, per street name. Replaces the
+// earlier length-based "stub street" exclusion: that rule measured the
+// length of the one segment crossing a given edge, which wrongly
+// penalized substantial streets whose specific edge-crossing segment
+// happened to be short even though the street has plenty of other
+// visible segments elsewhere. Segment count is a better proxy for "is
+// this a real, significant street on the current display" -- used as a
+// tie-breaker in placeLabels, not an exclusion filter, so a street is
+// never outright disqualified from labeling by this alone.
+function visibleSegmentCounts(ways, viewportBbox, gridBounds) {
+  const counts = new Map();
+  for (const way of ways) {
+    const name = way.tags && way.tags.name;
+    if (!name || !wayHasVisiblePortion(way, viewportBbox, gridBounds)) continue;
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  return counts;
 }
 
 // § Label placement — every candidate label point across all four edges,
 // for every currently-visible way with an assigned label. A candidate
-// carries its own intrinsic pass/fail state (angle rule, minimum-length
-// rule) but not whitespace/dedup, which depend on what else gets placed
-// and are handled by placeLabels below. "along" is the crossing's position
-// along whichever axis that edge runs (x for top/bottom, y for left/right)
-// -- what step 2's left-to-right/top-to-bottom position ordering sorts by.
+// carries its own intrinsic pass/fail state (the angle rule) but not
+// whitespace/dedup, which depend on what else gets placed and are handled
+// by placeLabels below. "along" is the crossing's position along whichever
+// axis that edge runs (x for top/bottom, y for left/right) -- what step
+// 2's left-to-right/top-to-bottom position ordering sorts by, after
+// segment count (see placeLabels).
 function collectLabelCandidates(ways, viewportBbox, gridBounds, labels) {
+  const segmentCounts = visibleSegmentCounts(ways, viewportBbox, gridBounds);
   const candidates = [];
   for (const way of ways) {
     const name = way.tags && way.tags.name;
     if (!name || !labels.has(name)) continue;
     const crossings = findEdgeCrossings(way, viewportBbox, gridBounds);
     if (crossings.length === 0) continue;
-    if (visibleLengthDots(way, viewportBbox, gridBounds) < MIN_LABEL_STREET_LENGTH_DOTS) continue;
     for (const crossing of crossings) {
       if (!crossingAngleOk(crossing)) continue;
       const along = crossing.edge === 'top' || crossing.edge === 'bottom' ? crossing.x : crossing.y;
-      candidates.push({ name, label: labels.get(name), tier: way.tier, edge: crossing.edge, along });
+      candidates.push({
+        name, label: labels.get(name), tier: way.tier, edge: crossing.edge, along,
+        segmentCount: segmentCounts.get(name) || 0
+      });
     }
   }
   return candidates;
@@ -1452,12 +1472,13 @@ function collectLabelCandidates(ways, viewportBbox, gridBounds, labels) {
 
 // § Label placement, steps 1-5 — the placement algorithm proper. Runs two
 // passes over the four edges in LABEL_EDGE_ORDER, walking tiers 1-7
-// (most to least important) within each edge and candidates in position
-// order within each tier: a primary pass that skips any street already
-// labeled on an earlier-processed edge (step 4, "at most one label"), then
-// a final pass over the same candidates without that restriction, filling
-// any room left over (step 5) -- which may duplicate an existing label or
-// give a first label to a street skipped everywhere in the primary pass.
+// (most to least important) within each edge and candidates by visible
+// segment count then position within each tier: a primary pass that skips
+// any street already labeled on an earlier-processed edge (step 4, "at
+// most one label"), then a final pass over the same candidates without
+// that restriction, filling any room left over (step 5) -- which may
+// duplicate an existing label or give a first label to a street skipped
+// everywhere in the primary pass.
 // Returns { top: [...], right: [...], bottom: [...], left: [...] }, each
 // entry { name, label, tier, edge, along, footprint }.
 function placeLabels(candidates, gridBounds, activeZones) {
@@ -1485,9 +1506,13 @@ function placeLabels(candidates, gridBounds, activeZones) {
     for (const edge of LABEL_EDGE_ORDER) {
       if (!activeZones[edge]) continue;
       for (let tier = 1; tier <= MAX_TIER; tier++) {
+        // Within a tier: more visible segments wins (a rough proxy for
+        // "how substantial is this street on the current display" -- see
+        // visibleSegmentCounts), then position order as the final,
+        // deterministic tie-break.
         const tierCandidates = byEdge[edge]
           .filter((c) => c.tier === tier)
-          .sort((a, b) => a.along - b.along);
+          .sort((a, b) => b.segmentCount - a.segmentCount || a.along - b.along);
         for (const c of tierCandidates) {
           if (skipAlreadyLabeled && labeledNames.has(c.name)) continue;
           const footprint = labelFootprintDots(edge);
