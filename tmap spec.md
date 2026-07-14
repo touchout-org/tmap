@@ -164,6 +164,8 @@ If changing scale would leave the cursor outside the new view, the view shifts t
 
 If a pan would leave the cursor outside the view on the edge opposite the pan direction, the cursor moves with the pan by the same amount, keeping its position relative to the view unchanged.
 
+If a pan would leave a POI marker's footprint straddling the boundary between the map and an active label zone — rendering it half in the map, half in the zone — the pan target is nudged by a few pixels along the pan's own axis, just enough to clear the marker to whichever side (fully back inside the map, or fully past the boundary into the zone) is the smaller move. This only applies where a label zone is actually active on that edge; a marker running past the edge of the map on a side with no zone is left alone, since there's no zone for it to visibly invade there.
+
 ## POIs
 
 The location edit field at the top of the main window is used to begin the DotTMAP experience. Entering a location returns the anchor POI, generates a map centered on that point, and adds a solid circle marker to that POI (currently a 3x3 square, like every other POI marker — see the note under [SVG Display Requirements](#svg-display-requirements)).

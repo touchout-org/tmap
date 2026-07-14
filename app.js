@@ -170,6 +170,11 @@ const MAP_COMPLEXITY_LEVELS = [
 // 4x4 cursor footprint. To be refined once this is visible on hardware.
 const CURSOR_HIT_RADIUS = 2;
 
+// § POIs — a POI marker's footprint, in grid dots (see createPoiMarkerSvg).
+// Also used by Pan Behavior's clipping-avoidance nudge (see panMap) to
+// know how close to a map/label-zone boundary is "too close."
+const POI_MARKER_DOTS = 3;
+
 const browserWarning = document.getElementById('browser-warning');
 const devCacheBanner = document.getElementById('dev-cache-banner');
 const searchForm = document.getElementById('search-form');
@@ -974,20 +979,28 @@ function viewportSizeFeet() {
   return { widthFt, heightFt };
 }
 
-// The geo bbox actually projected/displayed right now: centered on
-// viewportCenterLat/Lon, sized by the current scale, clamped to never
-// exceed the fetched data (lastBbox) even if the viewport is larger.
-function getViewportBbox() {
-  if (viewportCenterLat === null || !lastBbox) return null;
+// The geo bbox for an arbitrary candidate center, sized by the current
+// scale and clamped to never exceed the fetched data (lastBbox) even if
+// the viewport is larger. Factored out of getViewportBbox so Pan
+// Behavior's clipping-avoidance nudge (see panMap) can preview the bbox a
+// candidate pan target would produce before committing to it.
+function viewportBboxForCenter(centerLat, centerLon) {
   const { widthFt, heightFt } = viewportSizeFeet();
   const latDelta = feetToLatDelta(heightFt / 2);
-  const lonDelta = feetToLonDelta(widthFt / 2, viewportCenterLat);
+  const lonDelta = feetToLonDelta(widthFt / 2, centerLat);
   return {
-    south: Math.max(lastBbox.south, viewportCenterLat - latDelta),
-    north: Math.min(lastBbox.north, viewportCenterLat + latDelta),
-    west: Math.max(lastBbox.west, viewportCenterLon - lonDelta),
-    east: Math.min(lastBbox.east, viewportCenterLon + lonDelta)
+    south: Math.max(lastBbox.south, centerLat - latDelta),
+    north: Math.min(lastBbox.north, centerLat + latDelta),
+    west: Math.max(lastBbox.west, centerLon - lonDelta),
+    east: Math.min(lastBbox.east, centerLon + lonDelta)
   };
+}
+
+// The geo bbox actually projected/displayed right now: centered on
+// viewportCenterLat/Lon.
+function getViewportBbox() {
+  if (viewportCenterLat === null || !lastBbox) return null;
+  return viewportBboxForCenter(viewportCenterLat, viewportCenterLon);
 }
 
 // § Scale behavior / § Settings — Traditional Scale is the spec's default
@@ -1039,6 +1052,19 @@ function projectToSvg(lat, lon, bbox) {
   const rect = svgMapRect();
   const x = rect.x + ((lon - bbox.west) / (bbox.east - bbox.west)) * rect.width;
   const y = rect.y + ((bbox.north - lat) / (bbox.north - bbox.south)) * rect.height;
+  return { x, y };
+}
+
+// Same proportions as projectToSvg, but in grid dots relative to the map's
+// own drawable sub-rectangle (0..mapGridBounds().width/height) rather than
+// absolute SVG units -- and with no -0.5 pixel-center shift, since this
+// feeds Pan Behavior's clipping-avoidance nudge (see panMap), which needs
+// the same continuous position projectToSvg would actually render at, not
+// projectToGrid's cursor/hit-testing-oriented quantization.
+function mapRelativeDotPosition(lat, lon, bbox) {
+  const b = mapGridBounds();
+  const x = ((lon - bbox.west) / (bbox.east - bbox.west)) * b.width;
+  const y = ((bbox.north - lat) / (bbox.north - bbox.south)) * b.height;
   return { x, y };
 }
 
@@ -2071,7 +2097,7 @@ function renderStreetsAndAnchor(svgNs, bbox, ways, anchorLat, anchorLon) {
 }
 
 function createPoiMarkerSvg(svgNs, x, y, className) {
-  const size = 3 * SVG_UNITS_PER_DOT;
+  const size = POI_MARKER_DOTS * SVG_UNITS_PER_DOT;
   const rect = document.createElementNS(svgNs, 'rect');
   rect.setAttribute('x', (x - size / 2).toFixed(1));
   rect.setAttribute('y', (y - size / 2).toFixed(1));
@@ -2270,6 +2296,65 @@ function carryCursorPastTrailingEdge(direction, latStep, lonStep) {
 // "Edge of Map" and a tone plays (see § Sound cues), per spec. This is a
 // tone from the computer's own speakers, not the physical Dot Pad beeping --
 // the vendored SDK doesn't expose a device-side beep/vibrate.
+// § Pan Behavior — a POI marker landing with its footprint straddling a
+// map/label-zone boundary renders half in the map, half in the zone --
+// a visible clipping glitch. A pan along one axis can only ever move a
+// marker across the pair of edges on that same axis (a north/south pan
+// only affects the top/bottom boundary, an east/west pan only left/
+// right), so only that axis needs checking. Only an *active* zone's
+// boundary counts -- with no zone there, a marker running past the bare
+// canvas edge is already cleanly clipped by the SVG's own viewBox, no
+// glitch to avoid. Checks every currently-visible POI (see visiblePois);
+// if any marker would straddle, nudges the candidate center by just
+// enough to clear it -- landing fully inside the map or fully past the
+// boundary, whichever is the smaller (nearer) move.
+function nudgeToAvoidPoiClipping(direction, lat, lon) {
+  const horizontal = direction === 'east' || direction === 'west';
+  const b = mapGridBounds();
+  // insideSign is which sign of (position - boundary) means "inside the
+  // map" for that edge -- opposite for the near edge (0) vs. the far edge
+  // (width/height), since the map sits between them.
+  const edges = horizontal
+    ? [
+        { active: labelZones.left, boundary: 0, insideSign: 1 },
+        { active: labelZones.right, boundary: b.width, insideSign: -1 }
+      ]
+    : [
+        { active: labelZones.top, boundary: 0, insideSign: 1 },
+        { active: labelZones.bottom, boundary: b.height, insideSign: -1 }
+      ];
+
+  const halfMarker = POI_MARKER_DOTS / 2;
+  const clearance = halfMarker + 0.05; // just past the boundary, not exactly on it
+  const bbox = viewportBboxForCenter(lat, lon);
+  let dotShift = 0;
+
+  outer:
+  for (const poi of visiblePois()) {
+    const pos = mapRelativeDotPosition(poi.lat, poi.lon, bbox);
+    const value = horizontal ? pos.x : pos.y;
+    for (const edge of edges) {
+      if (!edge.active) continue;
+      const dist = value - edge.boundary;
+      if (Math.abs(dist) >= halfMarker) continue;
+      const toInside = edge.insideSign * clearance - dist;
+      const toOutside = -edge.insideSign * clearance - dist;
+      dotShift = Math.abs(toInside) <= Math.abs(toOutside) ? toInside : toOutside;
+      break outer;
+    }
+  }
+
+  if (dotShift === 0) return { lat, lon };
+
+  const { widthFt, heightFt } = viewportSizeFeet();
+  if (horizontal) {
+    const shiftFt = dotShift * (widthFt / b.width);
+    return { lat, lon: lon + feetToLonDelta(shiftFt, lat) };
+  }
+  const shiftFt = dotShift * (heightFt / b.height);
+  return { lat: lat - feetToLatDelta(shiftFt), lon };
+}
+
 function panMap(direction) {
   if (!lastBbox || viewportCenterLat === null) return;
   const { widthFt, heightFt } = viewportSizeFeet();
@@ -2282,6 +2367,8 @@ function panMap(direction) {
   else if (direction === 'south') newLat -= latStep;
   else if (direction === 'east') newLon += lonStep;
   else if (direction === 'west') newLon -= lonStep;
+
+  ({ lat: newLat, lon: newLon } = nudgeToAvoidPoiClipping(direction, newLat, newLon));
 
   const halfLat = feetToLatDelta(heightFt / 2);
   const halfLon = feetToLonDelta(widthFt / 2, newLat);
