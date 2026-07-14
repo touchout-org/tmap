@@ -1272,7 +1272,7 @@ function labelCandidateString(name) {
   return vowelsStripped.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
 }
 
-// § Label creation, steps 4-6 — assigns every street name a unique
+// § Label creation, steps 4-7 — assigns every street name a unique
 // 3-character label. Processes names in the given order (alphabetical, so
 // output is stable/reproducible run to run) -- uniqueness resolution is
 // first-come-first-served, so earlier names in the list get first claim
@@ -1283,7 +1283,9 @@ function assignBrailleLabels(names) {
 
   for (const name of names) {
     const candidate = labelCandidateString(name);
-    const label = findUniqueLabel(candidate, used) || findUniqueDigitSuffix(candidate, used);
+    const label = findUniqueLabel(candidate, used)
+      || findUniqueLabelWalkingMiddle(candidate, used)
+      || findUniqueDigitSuffix(candidate, used);
     used.add(label);
     labels.set(name, label);
   }
@@ -1321,10 +1323,31 @@ function padLabel(s) {
   return (s + '---').slice(0, 3);
 }
 
-// § Label creation, step 6 — every natural window collided, so fall back
-// to the candidate's first two characters (padded with a dash if the
-// candidate itself is shorter than 2 characters) plus a single trailing
-// digit, trying 0-9 in order until one is unique.
+// § Label creation, step 5b — every prefix-anchored window (step 5)
+// collided too, so try a different anchor: keep the candidate's first and
+// last characters fixed (the label's 1st and 3rd positions), and walk the
+// label's middle position through the candidate string's interior
+// characters. A different combinatorial space than step 5 (which only
+// ever anchors the first two characters), so it can still find a unique
+// label for a longer candidate string even after step 5 is exhausted.
+// Returns null if that's exhausted too (or the candidate is too short to
+// have a distinct first/middle/last), so the caller can fall through to
+// the digit-suffix step.
+function findUniqueLabelWalkingMiddle(candidate, used) {
+  if (candidate.length < 3) return null;
+  const first = candidate[0];
+  const last = candidate[candidate.length - 1];
+  for (let j = 1; j < candidate.length - 1; j++) {
+    const label = first + candidate[j] + last;
+    if (!used.has(label)) return label;
+  }
+  return null;
+}
+
+// § Label creation, step 7 — steps 5 and 6 both collided on every
+// attempt, so fall back to the candidate's first two characters (padded
+// with a dash if the candidate itself is shorter than 2 characters) plus
+// a single trailing digit, trying 0-9 in order until one is unique.
 function findUniqueDigitSuffix(candidate, used) {
   const prefix = (candidate.slice(0, 2) + '-').slice(0, 2);
   for (let digit = 0; digit <= 9; digit++) {
