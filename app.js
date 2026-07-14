@@ -1372,16 +1372,21 @@ const LABEL_ANGLE_THRESHOLD_DEGREES = 45;
 // § Label placement, step 1 — fixed edge processing order.
 const LABEL_EDGE_ORDER = ['top', 'right', 'bottom', 'left'];
 
-// § Label placement — a label's fixed footprint along the edge it's on:
-// 10 dots for top/bottom (see LABEL_ZONE_DOT_COLS -- a label reads
-// left-to-right within a horizontal zone), 5 dots for left/right (see
-// LABEL_ZONE_DOT_ROWS -- multiple labels stack top-to-bottom within a
-// vertical zone, each taking one zone-row's worth of height). These are
-// the same two constants that already size the zones themselves; a label
-// always exactly fills the zone's cross-dimension, so its along-edge
-// footprint is simply the other constant.
+// § Label placement — a label's actual along-edge content span: how much
+// room its own rendered dots take, not the zone's fixed depth. 8 dots for
+// top/bottom (the horizontal character span -- 2 dots/char x 3 chars + 1
+// dot kerning x 2 gaps, matching labelDotPositions' own charSpan exactly),
+// 3 dots for left/right (just the character height, since a label always
+// reads horizontally regardless of which edge it's on -- see
+// labelDotPositions). This governs both same-edge whitespace and how far
+// a label can reach before needing corner space; using the zone's full
+// depth (LABEL_ZONE_DOT_COLS/ROWS, which already bakes in the 2-dot
+// map-side padding) here double-counts that padding as if it were also
+// inter-label spacing, over-restricting both.
 function labelFootprintDots(edge) {
-  return edge === 'top' || edge === 'bottom' ? LABEL_ZONE_DOT_COLS : LABEL_ZONE_DOT_ROWS;
+  return edge === 'top' || edge === 'bottom'
+    ? LABEL_CHAR_WIDTH_DOTS * 3 + LABEL_CHAR_KERNING_DOTS * 2
+    : LABEL_CHAR_HEIGHT_DOTS;
 }
 
 // § Label placement — which of the map rectangle's four edges (if any) a
