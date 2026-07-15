@@ -418,7 +418,7 @@ Priority tiers as set by the user on 2026-07-08:
 |---|---|---|
 | Settings dialog (units, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. An earlier, minimal experimental tuning-fields surface for the (now-retired) automated decluttering/collapse parameters existed briefly before this dialog — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Edit Map dialog~~ | Map editing | Done, in a different shape than originally planned here — see [Editing the Map](#editing-the-map) |
-| Download to a local `.svg` file | Downloading | Distinct from full My Archives (P2) — no account needed; design complete, see [Download to Local SVG](#download-to-local-svg) |
+| ~~Download to a local `.svg` file~~ | Downloading | Done — distinct from full My Archives (P2), no account needed; see [Download to Local SVG](#download-to-local-svg) |
 | Braille translator (multi-code: US uncontracted, contracted UEB) | Braille translation | Resolved: baseline 8-dot computer output ships early via the reused DotSVG module, no translator needed; building the full multi-code translator is phased into Phase 5 as an external dependency |
 | ~~Large-scale street decluttering algorithm~~ | Large-scale decluttering | Built (semantic tiers + measured grid density), then retired in favor of the manual Map Complexity filter — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Divided-road carriageway collapse~~ | Large-scale decluttering | Built, then retired along with the rest of the automated pipeline — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
@@ -460,7 +460,7 @@ Priority tiers as set by the user on 2026-07-08:
 
 14. Additional POIs, threshold-distance modal, POI list box and panning-on-select.
 15. ~~Edit Map dialog~~ — done, though the final shape diverged substantially from this list's original "feature checkboxes, save/cancel" description during hands-on testing: see [Editing the Map](#editing-the-map) for the current POIs / Visible Streets / Hidden Features / Map Complexity design (clickable list items, no checkboxes, immediate effect, no Save/Cancel).
-16. Download to a local `.svg` file — no account dependency, so it doesn't need to wait for Phase 5. Design complete, see [Download to Local SVG](#download-to-local-svg); not yet implemented.
+16. ~~Download to a local `.svg` file~~ — done, see [Download to Local SVG](#download-to-local-svg).
 
 **Phase 4 — Braille label content (builds on the Phase 1 zone infrastructure)**
 
