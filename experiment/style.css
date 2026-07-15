@@ -6,6 +6,61 @@ body {
   line-height: 1.5;
 }
 
+#view-menu-container {
+  position: relative;
+  display: inline-block;
+  margin-bottom: 1rem;
+}
+
+#view-menu-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#view-menu-button::after {
+  content: "\25BE";
+  font-size: 0.8em;
+}
+
+#view-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1;
+  margin: 0.25rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid #888;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  min-width: 10rem;
+}
+
+#view-menu li {
+  margin: 0;
+}
+
+#view-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: none;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+#view-menu button:hover,
+#view-menu button:focus {
+  background: Highlight;
+  color: HighlightText;
+  outline: none;
+}
+
 form {
   display: flex;
   gap: 0.5rem;

@@ -7,6 +7,19 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="view-menu-container">
+  <button type="button" id="view-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="view-menu">
+    Data view
+  </button>
+  <ul id="view-menu" role="menu" aria-labelledby="view-menu-button" hidden>
+    <li role="none"><button type="button" role="menuitem" tabindex="-1" data-view="overview">Overview</button></li>
+    <li role="none"><button type="button" role="menuitem" tabindex="-1" data-view="highway">Highway</button></li>
+    <li role="none"><button type="button" role="menuitem" tabindex="-1" data-view="unique-streets">Unique streets</button></li>
+    <li role="none"><button type="button" role="menuitem" tabindex="-1" data-view="address">Address</button></li>
+    <li role="none"><button type="button" role="menuitem" tabindex="-1" data-view="braille-labels">Braille Labels</button></li>
+  </ul>
+</div>
+
 <h1>OSM Data Viewer</h1>
 
 <form id="search-form">
@@ -24,14 +37,6 @@
 
 <footer>
   <h2>Footer</h2>
-  <fieldset id="view-selector">
-    <legend>Data view</legend>
-    <label><input type="radio" name="view" value="overview" checked> Overview</label>
-    <label><input type="radio" name="view" value="highway"> Highway</label>
-    <label><input type="radio" name="view" value="unique-streets"> Unique streets</label>
-    <label><input type="radio" name="view" value="address"> Address</label>
-    <label><input type="radio" name="view" value="braille-labels"> Braille Labels</label>
-  </fieldset>
   <button type="button" id="copy-svg-btn">Copy SVG</button>
   <p id="copy-svg-status" aria-live="polite"></p>
   <p>End of page</p>

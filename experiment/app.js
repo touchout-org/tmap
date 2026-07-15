@@ -21,12 +21,15 @@ const input = document.getElementById('location-input');
 const statusMessage = document.getElementById('status-message');
 const matchedLocation = document.getElementById('matched-location');
 const streetList = document.getElementById('street-list');
-const viewInputs = document.querySelectorAll('input[name="view"]');
+const viewMenuButton = document.getElementById('view-menu-button');
+const viewMenu = document.getElementById('view-menu');
+const viewMenuItems = Array.from(viewMenu.querySelectorAll('[role="menuitem"]'));
 const copySvgBtn = document.getElementById('copy-svg-btn');
 const copySvgStatus = document.getElementById('copy-svg-status');
 
 let lastWays = [];
 let lastBbox = null;
+let currentView = 'overview';
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -36,12 +39,85 @@ form.addEventListener('submit', (event) => {
   }
 });
 
-viewInputs.forEach((viewInput) => {
-  viewInput.addEventListener('change', () => {
+// § Layout experiment — accessible menu button (WAI-ARIA "Actions Menu
+// Button" pattern) replacing what used to be a radio-button fieldset in the
+// footer. Selecting an item takes effect immediately and closes the menu;
+// there's no persistent visual "currently selected" indicator by design
+// (this is an actions menu, not a settings/options menu), so menu items are
+// plain menuitem buttons rather than menuitemradio.
+function openViewMenu(focusIndex) {
+  viewMenu.hidden = false;
+  viewMenuButton.setAttribute('aria-expanded', 'true');
+  focusViewMenuItem(focusIndex);
+}
+
+function closeViewMenu({ focusButton = false } = {}) {
+  if (viewMenu.hidden) return;
+  viewMenu.hidden = true;
+  viewMenuButton.setAttribute('aria-expanded', 'false');
+  if (focusButton) viewMenuButton.focus();
+}
+
+// Roving tabindex: only the item DOM focus currently sits on is reachable
+// via Tab; arrow keys move both the tabindex and actual focus together.
+function focusViewMenuItem(index) {
+  viewMenuItems.forEach((item, i) => item.setAttribute('tabindex', i === index ? '0' : '-1'));
+  viewMenuItems[index].focus();
+}
+
+viewMenuButton.addEventListener('click', () => {
+  if (viewMenu.hidden) {
+    openViewMenu(0);
+  } else {
+    closeViewMenu();
+  }
+});
+
+viewMenuButton.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    openViewMenu(0);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    openViewMenu(viewMenuItems.length - 1);
+  }
+});
+
+viewMenuItems.forEach((item, index) => {
+  item.addEventListener('click', () => {
+    currentView = item.dataset.view;
+    closeViewMenu({ focusButton: true });
     if (lastWays.length) {
       renderResults(lastWays);
     }
   });
+
+  item.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusViewMenuItem((index + 1) % viewMenuItems.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusViewMenuItem((index - 1 + viewMenuItems.length) % viewMenuItems.length);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      focusViewMenuItem(0);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      focusViewMenuItem(viewMenuItems.length - 1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeViewMenu({ focusButton: true });
+    } else if (event.key === 'Tab') {
+      closeViewMenu();
+    }
+  });
+});
+
+document.addEventListener('click', (event) => {
+  if (!viewMenu.hidden && !event.target.closest('#view-menu-container')) {
+    closeViewMenu();
+  }
 });
 
 copySvgBtn.addEventListener('click', async () => {
@@ -58,10 +134,6 @@ copySvgBtn.addEventListener('click', async () => {
     copySvgStatus.textContent = 'Could not copy SVG to clipboard.';
   }
 });
-
-function getSelectedView() {
-  return document.querySelector('input[name="view"]:checked').value;
-}
 
 async function runSearch(query) {
   clearResults();
@@ -165,7 +237,7 @@ function renderResults(ways) {
   lastWays = ways;
   streetList.innerHTML = '';
 
-  const view = getSelectedView();
+  const view = currentView;
   if (view === 'address') {
     renderAddressView(ways);
   } else if (view === 'braille-labels') {
