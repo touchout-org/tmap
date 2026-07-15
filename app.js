@@ -683,6 +683,21 @@ poiListSelect.addEventListener('focus', () => {
   if (poiListSelect.options.length === 1) panToSelectedPoi();
 });
 
+// § Additional POIs — moves the list box's own selection forward/backward
+// (direction = +1/-1), clamped at either end rather than wrapping (same
+// boundary behavior a real arrow-key move in the list box would have),
+// then applies the same pan-to-selection behavior a change event would.
+// Called explicitly rather than relying on 'change' since setting
+// selectedIndex programmatically never fires it -- this is also what
+// makes the . / , hotkeys and dot4/dot1 below work correctly with only
+// the anchor in the list, same as the list box's own focus-triggered
+// snap-back.
+function navigatePoiList(direction) {
+  if (poiListSelect.disabled || poiListSelect.options.length === 0) return;
+  poiListSelect.selectedIndex = clamp(poiListSelect.selectedIndex + direction, 0, poiListSelect.options.length - 1);
+  panToSelectedPoi();
+}
+
 // § Editing the Map — every street/pathway name currently in lastWays
 // (regardless of hidden state -- the dialog must still list a hidden
 // feature so it can be turned back on), merged into one alphabetical list
@@ -2461,6 +2476,15 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  // § Additional POIs — . / , navigate forward/back through the POI list,
+  // same as dot 4 / dot 1 alone on the Dot Pad (see the key-event callback
+  // below).
+  if (event.key === '.' || event.key === ',') {
+    event.preventDefault();
+    navigatePoiList(event.key === '.' ? 1 : -1);
+    return;
+  }
+
   // § Command / hotkey mapping — [ increases scale (zoom out), ] decreases
   // (zoom in).
   if (event.key === '[' || event.key === ']') {
@@ -2868,5 +2892,8 @@ sdk.setCallBack(
     // Scale: two-dot combos.
     else if (byte6 === 0x06) changeScale(1);     // dots 2+3 -> increase (zoom out)
     else if (byte6 === 0x30) changeScale(-1);    // dots 5+6 -> decrease (zoom in)
+    // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
+    else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
+    else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI
   }
 );

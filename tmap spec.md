@@ -81,6 +81,8 @@ The following table specifies the functions that can be accessed from the app or
 | Map Complexity: Major highways | `4` | none |
 | Toggle cursor-only mode | `0` | none |
 | Open Custom POI ("Drop Pin") dialog | `a` | none |
+| Next POI | `.` | dot 4 |
+| Previous POI | `,` | dot 1 |
 
 Toggling a label setting from the keyboard reports the new state in the message field, in the form "top labels on/off" (etc.), which is mirrored to the Dot Pad message display. As with all message-display updates, the app-side field is the source of truth: it updates first, then pushes to the Dot Pad and triggers the ARIA live announcement — see [Message display architecture](#message-display-architecture).
 
@@ -179,6 +181,8 @@ If a subsequent POI location is more than [threshold distance] away from the anc
 If a subsequent POI is less than [threshold distance] away, the new POI is added to the current map and the map pans to center that new POI. Panning behavior automatically happens, announcing the distance and direction from the anchor POI. Multiple additional POIs can be added to a single map.
 
 As POIs are added to the map, the locations are added to a list box on the left of the page. Selecting an item from the list box — live while arrowing through the options, or on a click — pans to that POI, moves the cursor there, and triggers the related panning announcement. This holds even when the anchor is the only entry in the list (no additional POIs added yet): focusing the list box in that case snaps straight back to the anchor, the same as selecting it would, since a single-entry list box has nothing to arrow or click *to* that would otherwise trigger the pan.
+
+The `.`/`,` hotkeys (dot 4 / dot 1 alone on the Dot Pad — see [command mapping](#command--hotkey-mapping)) step forward/backward through the same list without needing focus to be in the list box itself — the same as arrowing through it directly, clamped at either end rather than wrapping, and updating the list box's own displayed selection to match.
 
 ### Custom POIs
 
