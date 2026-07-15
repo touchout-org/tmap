@@ -167,9 +167,11 @@ const SCALE_PRESETS_M = [10, 25, 35, 50, 60, 120, 180, 250, 600];
 const DEFAULT_SCALE_INDEX = 3; // 400 ft / 50 m
 const DOT_PAD_DISPLAY_WIDTH_INCHES = 6 + 3 / 16;
 
-// § Pan Behavior / § Settings — default Pan Amount, in units of display
-// width/height (no Settings dialog yet, so this is the only value in use).
-const PAN_AMOUNT_FRACTION = 0.25;
+// § Pan Behavior / § Settings — Pan Amount, in units of display width/
+// height, shared by both horizontal and vertical pans (a single control,
+// see settingsPanAmountSelect below -- an explicit user decision, not a
+// pair of independent horizontal/vertical settings). Default 1/4.
+let panAmountFraction = 0.25;
 
 // § Street importance tiers — every way gets tagged with a tier in
 // processWays, purely as data for the Map Complexity filter (see
@@ -258,6 +260,7 @@ const btnDisconnect = document.getElementById('menu-disconnect');
 const settingsDialog = document.getElementById('settings-dialog');
 const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
 const settingsUnitsSelect = document.getElementById('settings-units');
+const settingsPanAmountSelect = document.getElementById('settings-pan-amount');
 const btnSettingsDone = document.getElementById('btn-settings-done');
 
 let hasAnchor = false;
@@ -733,6 +736,7 @@ btnSettings.addEventListener('click', () => {
   closeMainMenu({ focusButton: true });
   settingsBrailleCodeSelect.value = brailleCodeSetting;
   settingsUnitsSelect.value = unitSystem;
+  settingsPanAmountSelect.value = String(panAmountFraction);
   for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
   settingsDialog.showModal();
 });
@@ -760,6 +764,15 @@ settingsUnitsSelect.addEventListener('change', () => {
   refreshScaleOptions();
   setMessage(`Units: ${unitSystem === 'metric' ? 'Metric' : 'Imperial'}`);
   refreshMap();
+});
+
+// § Pan Behavior / § Settings — a single shared fraction for both
+// horizontal and vertical pans (see panMap), not independent per-axis
+// settings -- an explicit user decision. No re-render needed: this only
+// changes the size of the *next* pan, nothing currently on screen.
+settingsPanAmountSelect.addEventListener('change', () => {
+  panAmountFraction = Number(settingsPanAmountSelect.value);
+  setMessage(`Pan amount: ${settingsPanAmountSelect.selectedOptions[0].textContent}`);
 });
 
 // § Braille labels — shared toggle used by both the dialog checkboxes and
@@ -2866,12 +2879,20 @@ function carryCursorPastTrailingEdge(direction, latStep, lonStep) {
   }
 }
 
-// § Pan Behavior — moves the viewport by PAN_AMOUNT_FRACTION of its current
-// width/height. Rejected (viewport unchanged) if the move would push the
-// viewport past the edge of the fetched data; the message field reports
-// "Edge of Map" and a tone plays (see § Sound cues), per spec. This is a
-// tone from the computer's own speakers, not the physical Dot Pad beeping --
-// the vendored SDK doesn't expose a device-side beep/vibrate.
+// § Pan Behavior — moves the viewport by panAmountFraction of its current
+// width/height, via viewportSizeFeet() -- which is already derived from
+// mapGridBounds()'s zone-shrunk dot dimensions, not the fixed DOT_GRID_
+// WIDTH/HEIGHT canvas. So a pan is always panAmountFraction of whatever's
+// actually currently visible: turning on a label zone shrinks the
+// effective pan distance right along with the viewport it shrinks,
+// with no separate handling needed here. Verified 2026-07-15: 412ft
+// baseline pan dropped to 361ft with the Top zone active, matching the
+// zone's 35/40 dot-row reduction (412 * 35/40 = 360.5) almost exactly.
+// Rejected (viewport unchanged) if the move would push the viewport past
+// the edge of the fetched data; the message field reports "Edge of Map"
+// and a tone plays (see § Sound cues), per spec. This is a tone from the
+// computer's own speakers, not the physical Dot Pad beeping -- the
+// vendored SDK doesn't expose a device-side beep/vibrate.
 // § Pan Behavior — a POI marker landing with its footprint straddling a
 // map/label-zone boundary renders half in the map, half in the zone --
 // a visible clipping glitch. A pan along one axis can only ever move a
@@ -2934,8 +2955,8 @@ function nudgeToAvoidPoiClipping(direction, lat, lon) {
 function panMap(direction) {
   if (!lastBbox || viewportCenterLat === null) return;
   const { widthFt, heightFt } = viewportSizeFeet();
-  const latStep = feetToLatDelta(heightFt * PAN_AMOUNT_FRACTION);
-  const lonStep = feetToLonDelta(widthFt * PAN_AMOUNT_FRACTION, viewportCenterLat);
+  const latStep = feetToLatDelta(heightFt * panAmountFraction);
+  const lonStep = feetToLonDelta(widthFt * panAmountFraction, viewportCenterLat);
 
   let newLat = viewportCenterLat;
   let newLon = viewportCenterLon;
