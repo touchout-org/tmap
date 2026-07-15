@@ -244,6 +244,7 @@ const poiTooFarMessage = document.getElementById('poi-too-far-message');
 const btnPoiShowAnyway = document.getElementById('btn-poi-show-anyway');
 const btnPoiCancel = document.getElementById('btn-poi-cancel');
 const customPoiDialog = document.getElementById('custom-poi-dialog');
+const customPoiStatus = document.getElementById('custom-poi-status');
 const customPoiForm = document.getElementById('custom-poi-form');
 const customPoiNameInput = document.getElementById('custom-poi-name');
 const btnCustomPoiCancel = document.getElementById('btn-custom-poi-cancel');
@@ -924,17 +925,157 @@ function addAdditionalPoi(shortName, lat, lon) {
   panToPoint(lat, lon);
 }
 
+// § Drop Pin — dots-to-feet conversion at the current Scale, used to turn
+// the fixed-in-dots CURSOR_HIT_RADIUS into a real-world nearby-places
+// search radius that shrinks/grows with zoom (an explicit user decision).
+// Independent of active label zones: viewportSizeFeet's width/height both
+// scale with mapGridBounds' shrunk dot count proportionally, so the ratio
+// between real-world feet and dots cancels back out to this same value
+// regardless of which zones are active -- only the total visible area
+// changes with zones, not this per-dot ratio.
+function feetPerDot() {
+  const inchesPerDot = DOT_PAD_DISPLAY_WIDTH_INCHES / DOT_GRID_WIDTH;
+  if (unitSystem === 'metric') {
+    return (SCALE_PRESETS_M[scaleIndex] * inchesPerDot * CM_PER_INCH) / FEET_TO_METERS;
+  }
+  return SCALE_PRESETS_FT[scaleIndex] * inchesPerDot;
+}
+
+// § Drop Pin — queries Overpass for every node/way/relation within
+// CURSOR_HIT_RADIUS (converted to real-world feet via feetPerDot, then to
+// meters for Overpass's own around: radius) of the given point. Per an
+// explicit user decision, "addresses/tourist/businesses" means the union
+// of: anything carrying an address (addr:housenumber, regardless of what
+// else it's tagged), and the standard amenity/shop/tourism/office/leisure
+// POI tag families -- explicitly not highway=* or other street/path
+// features, which are fetched separately (see fetchWays). out center
+// gives ways/relations a usable point (their bounding-geometry center)
+// alongside nodes' own direct lat/lon.
+async function fetchNearbyPoiCandidates(lat, lon) {
+  const radiusMeters = CURSOR_HIT_RADIUS * feetPerDot() * FEET_TO_METERS;
+  const tagFilter = '[~"^(amenity|shop|tourism|office|leisure)$"~"."]';
+  const query = `[out:json][timeout:25];` +
+    `(nwr(around:${radiusMeters},${lat},${lon})${tagFilter};` +
+    `nwr(around:${radiusMeters},${lat},${lon})["addr:housenumber"];);` +
+    `out center;`;
+  const res = await fetch(OVERPASS_URL, {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query)
+  });
+  if (!res.ok) throw new Error('overpass-poi-failed');
+  const data = await res.json();
+  return data.elements || [];
+}
+
+// § Drop Pin — a candidate's display name: its own name if tagged, else a
+// constructed "[house number] [street]" (same short-address style as
+// formatShortAddress elsewhere), per an explicit user decision. Returns
+// null for a result with neither -- happens for e.g. an unnamed leisure=*
+// way with no address either, and such results aren't useful to suggest.
+function candidateDisplayName(tags) {
+  if (tags.name) return tags.name;
+  const addr = [tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(' ');
+  return addr || null;
+}
+
+// A node's own lat/lon, or a way/relation's out-center point. Null if
+// neither is present (shouldn't happen given `out center;`, but guards
+// against an unexpected response shape rather than crashing on it).
+function elementLatLon(el) {
+  if (el.type === 'node') return { lat: el.lat, lon: el.lon };
+  if (el.center) return { lat: el.center.lat, lon: el.center.lon };
+  return null;
+}
+
+// § Drop Pin — builds the sorted candidate list (name + real-world
+// position) from raw Overpass elements, dropping any with neither a name
+// nor a constructable address (see candidateDisplayName) or no usable
+// position. Duplicate names (e.g. two nearby same-chain businesses) are
+// kept as separate entries -- they're different physical places.
+function buildPoiCandidates(elements) {
+  const candidates = [];
+  for (const el of elements) {
+    const tags = el.tags || {};
+    const name = candidateDisplayName(tags);
+    const pos = elementLatLon(el);
+    if (!name || !pos) continue;
+    candidates.push({ name, lat: pos.lat, lon: pos.lon });
+  }
+  candidates.sort((a, b) => a.name.localeCompare(b.name));
+  return candidates;
+}
+
+// § Drop Pin — the current dialog session's candidate list and navigation
+// position (see the input's own keydown handler below). customPoiRequestToken
+// guards against a slow Overpass response from an earlier Drop Pin
+// invocation landing after the dialog's been reopened (or the map panned/
+// rescaled) for a new one -- only the response matching the token issued at
+// the time of the *current* invocation is applied.
+let customPoiCandidates = [];
+let customPoiCandidateIndex = -1;
+let customPoiRequestToken = 0;
+
 // § Additional POIs — "Drop Pin" adds a custom, user-named POI at the
 // cursor's current position, via the same addAdditionalPoi path as any
 // other POI -- so it shows up in the POI dropdown, the Edit Map dialog,
 // rendering, hit-testing, and the tactile raster exactly like an
-// address pulled from OSM, with no separate plumbing needed.
-function openCustomPoiDialog() {
+// address pulled from OSM, with no separate plumbing needed. The dialog's
+// suggested name candidates (below) only ever influence what text starts
+// out in the edit field -- confirming with OK always places the new POI
+// at the cursor's own position (per an explicit user decision), never at
+// a suggested candidate's own (possibly slightly different) coordinates.
+async function openCustomPoiDialog() {
+  const token = ++customPoiRequestToken;
+  customPoiCandidates = [];
+  customPoiCandidateIndex = -1;
   customPoiNameInput.value = '';
+  customPoiStatus.textContent = 'Loading nearby places…';
   customPoiDialog.showModal();
+
+  let elements;
+  try {
+    elements = await fetchNearbyPoiCandidates(cursorLat, cursorLon);
+  } catch (err) {
+    if (token === customPoiRequestToken) customPoiStatus.textContent = 'Could not load nearby places.';
+    return;
+  }
+  if (token !== customPoiRequestToken) return;
+
+  customPoiCandidates = buildPoiCandidates(elements);
+  if (customPoiCandidates.length) {
+    customPoiCandidateIndex = 0;
+    customPoiNameInput.value = customPoiCandidates[0].name;
+    customPoiStatus.textContent = '';
+  } else {
+    customPoiStatus.textContent = 'No nearby places found.';
+  }
 }
 
 btnDropPin.addEventListener('click', openCustomPoiDialog);
+
+// § Drop Pin — Up/Down step through customPoiCandidates without wrapping
+// (a no-op at either end), populating the edit field with each candidate's
+// name in turn; the user can still freely retype over whatever's there.
+// preventDefault on both -- neither has a native meaning in a single-line
+// text input, but this keeps them from doing anything unexpected. Global
+// map hotkeys (including cursor movement) are already blocked while this
+// input has focus, per isFormControlFocused's existing INPUT/SELECT/
+// TEXTAREA check -- no separate guarding needed here for that.
+customPoiNameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    if (customPoiCandidateIndex < customPoiCandidates.length - 1) {
+      customPoiCandidateIndex++;
+      customPoiNameInput.value = customPoiCandidates[customPoiCandidateIndex].name;
+    }
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (customPoiCandidateIndex > 0) {
+      customPoiCandidateIndex--;
+      customPoiNameInput.value = customPoiCandidates[customPoiCandidateIndex].name;
+    }
+  }
+});
 
 customPoiForm.addEventListener('submit', (event) => {
   event.preventDefault();
