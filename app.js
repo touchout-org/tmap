@@ -109,11 +109,20 @@ const POI_DISTANCE_THRESHOLD_MILES = 0.5;
 // NABCC regardless of this setting (see labelCharacterDots).
 let brailleCodeSetting = 'ueb2';
 
+// § Settings — Imperial ('imperial': in/ft/mi) or Metric ('metric': cm/m/km).
+// Affects the Scale control's ladder/label (see SCALE_PRESETS_M,
+// formatScaleLabel, viewportSizeFeet) and how distances from the anchor POI
+// are reported (see formatDistance) -- panning and the "too far" new-POI
+// prompt. Defaults to Imperial, matching every other distance/scale value
+// in this file predating this setting.
+let unitSystem = 'imperial';
+
 // Matches DotSVG's 600x400 canvas (10:1 over the 60x40 dot grid) — see tmap spec.md
 // § SVG Display Requirements (3x2 canvas ratio).
 const SVG_WIDTH = 600;
 const SVG_HEIGHT = 400;
 const MILES_TO_METERS = 1609.344;
+const CM_PER_INCH = 2.54;
 
 // § Cursor and hit testing — the cursor/hit-testing grid is fixed at the
 // Dot Pad's native 60x40 dot resolution (confirmed via the on-connect
@@ -139,7 +148,23 @@ const LABEL_ZONE_DOT_ROWS = 5;
 // that fixed ratio rather than tracked separately). Works out to ~9.7 dots
 // per inch on both axes -- close enough to call it 10 DPI.
 const SCALE_PRESETS_FT = [100, 200, 300, 400, 500, 1000, 1500, 2000, 5000];
-const DEFAULT_SCALE_INDEX = 3; // 400
+// § Settings — the Metric counterpart of SCALE_PRESETS_FT ("1 cm = Y m"),
+// chosen as the closest clean round-number ladder to each Imperial preset's
+// *actual real-world footprint*, not to its raw ft number -- since the
+// physical device is fixed in inches, "1 cm = Y m" and "1 in = X ft" only
+// describe the same map footprint when Y = X * FEET_TO_METERS / CM_PER_INCH
+// (which reduces to X * 0.12 exactly, since 0.3048 / 2.54 = 0.12). Each
+// entry below is that exact conversion (100->12, 200->24, ... 5000->600)
+// rounded to a nearby clean number (within ~5%, except the smallest preset
+// at ~17%) -- see viewportSizeFeet, which is what actually applies
+// whichever ladder is current, not just the label. Same length/index
+// meaning as SCALE_PRESETS_FT so scaleIndex stays valid switching either
+// direction; per an explicit user decision, the two ladders are
+// independent round-number sets rather than exact conversions of each
+// other, so the real-world map footprint does shift slightly (by whatever
+// the rounding introduced) when Units is toggled.
+const SCALE_PRESETS_M = [10, 25, 35, 50, 60, 120, 180, 250, 600];
+const DEFAULT_SCALE_INDEX = 3; // 400 ft / 50 m
 const DOT_PAD_DISPLAY_WIDTH_INCHES = 6 + 3 / 16;
 
 // § Pan Behavior / § Settings — default Pan Amount, in units of display
@@ -230,6 +255,7 @@ const btnDownloadSvg = document.getElementById('btn-download-svg');
 const btnSettings = document.getElementById('btn-settings');
 const settingsDialog = document.getElementById('settings-dialog');
 const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
+const settingsUnitsSelect = document.getElementById('settings-units');
 const btnSettingsDone = document.getElementById('btn-settings-done');
 
 let hasAnchor = false;
@@ -606,6 +632,7 @@ for (const zone in labelCheckboxes) {
 // match current state, and the dialog's own button just dismisses it.
 btnSettings.addEventListener('click', () => {
   settingsBrailleCodeSelect.value = brailleCodeSetting;
+  settingsUnitsSelect.value = unitSystem;
   for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
   settingsDialog.showModal();
 });
@@ -620,6 +647,19 @@ settingsBrailleCodeSelect.addEventListener('change', () => {
   // setMessage again, just its device-facing half.
   rebuildMessageWindow(lastMessageText);
   sendCurrentMessageChunkToDevice();
+});
+
+// § Settings — switches both the Scale ladder/label (SCALE_PRESETS_M vs.
+// SCALE_PRESETS_FT, see refreshScaleOptions/viewportSizeFeet) and how
+// anchor-relative distances are reported (see formatDistance). Re-renders
+// immediately since the current scale preset's real-world footprint
+// changes along with the unit system (an explicit, accepted tradeoff of
+// keeping each unit system's scale ladder on clean round numbers).
+settingsUnitsSelect.addEventListener('change', () => {
+  unitSystem = settingsUnitsSelect.value;
+  refreshScaleOptions();
+  setMessage(`Units: ${unitSystem === 'metric' ? 'Metric' : 'Imperial'}`);
+  refreshMap();
 });
 
 // § Braille labels — shared toggle used by both the dialog checkboxes and
@@ -745,7 +785,7 @@ async function createNewAnchor(displayName, shortName, lat, lon, query) {
 function promptTooFarPoi(displayName, shortName, lat, lon, distFt, query) {
   pendingFarPoi = { displayName, shortName, lat, lon, query };
   poiTooFarMessage.textContent =
-    `The new location is ${Math.round(distFt)} ft away from ${lastAnchorName}. ` +
+    `The new location is ${formatDistance(distFt)} away from ${lastAnchorName}. ` +
     `That's too far away for a single map.`;
   btnPoiShowAnyway.textContent = `Show ${shortName}`;
   poiTooFarDialog.showModal();
@@ -1094,11 +1134,11 @@ function panToPoint(lat, lon) {
 // explicit pan and panning to a POI.
 function announcePositionRelativeToAnchor() {
   const { eastFt, northFt } = feetOffsetFrom(viewportCenterLat, viewportCenterLon, lastAnchorLat, lastAnchorLon);
-  const distFt = Math.round(Math.hypot(eastFt, northFt));
+  const distFt = Math.hypot(eastFt, northFt);
   const compass = Math.abs(eastFt) > Math.abs(northFt)
     ? (eastFt >= 0 ? 'East' : 'West')
     : (northFt >= 0 ? 'North' : 'South');
-  setMessage(distFt === 0 ? `At ${lastAnchorName}` : `${distFt} ft ${compass} of ${lastAnchorName}`);
+  setMessage(distFt === 0 ? `At ${lastAnchorName}` : `${formatDistance(distFt)} ${compass} of ${lastAnchorName}`);
 }
 
 // § Data ingestion and cleaning pipeline, step 1 (Geocode)
@@ -1155,6 +1195,7 @@ function squareBoundingBox(lat, lon, halfSideMiles) {
 
 const FEET_TO_METERS = 0.3048;
 const METERS_PER_DEGREE_LAT = 111320;
+const FEET_PER_MILE = MILES_TO_METERS / FEET_TO_METERS;
 
 function feetToLatDelta(feet) {
   return (feet * FEET_TO_METERS) / METERS_PER_DEGREE_LAT;
@@ -1180,6 +1221,12 @@ function feetOffsetFrom(lat, lon, fromLat, fromLon) {
 function viewportSizeFeet() {
   const b = mapGridBounds();
   const inchesPerDot = DOT_PAD_DISPLAY_WIDTH_INCHES / DOT_GRID_WIDTH;
+  if (unitSystem === 'metric') {
+    const cmPerDot = inchesPerDot * CM_PER_INCH;
+    const widthM = SCALE_PRESETS_M[scaleIndex] * (b.width * cmPerDot);
+    const heightM = SCALE_PRESETS_M[scaleIndex] * (b.height * cmPerDot);
+    return { widthFt: widthM / FEET_TO_METERS, heightFt: heightM / FEET_TO_METERS };
+  }
   const widthFt = SCALE_PRESETS_FT[scaleIndex] * (b.width * inchesPerDot);
   const heightFt = SCALE_PRESETS_FT[scaleIndex] * (b.height * inchesPerDot);
   return { widthFt, heightFt };
@@ -1214,7 +1261,35 @@ function getViewportBbox() {
 // value rather than a placeholder. (Display Area is still what actually
 // drives the viewport math in viewportSizeFeet() — this is just the label.)
 function formatScaleLabel(index) {
-  return `1 in = ${SCALE_PRESETS_FT[index]} ft`;
+  return unitSystem === 'metric'
+    ? `1 cm = ${SCALE_PRESETS_M[index]} m`
+    : `1 in = ${SCALE_PRESETS_FT[index]} ft`;
+}
+
+// § Settings — re-labels every existing Scale combo box option after a
+// Units change (see settingsUnitsSelect's change listener below). Only the
+// text changes; option values stay the same index, so the current
+// selection (scaleIndex) survives the switch untouched.
+function refreshScaleOptions() {
+  Array.from(scaleSelect.options).forEach((option, index) => {
+    option.textContent = formatScaleLabel(index);
+  });
+}
+
+// § Pan Behavior / § Additional POIs / § Settings — formats a distance (in
+// feet, this file's one internal distance unit -- see feetOffsetFrom) for
+// on-screen/braille display under the current unitSystem. Per an explicit
+// user decision: Imperial reports feet up to 1000 ft, then miles (rounded
+// to the nearest tenth) beyond; Metric reports meters up to 500 m, then
+// kilometers (rounded to the nearest tenth) beyond. Shared by
+// announcePositionRelativeToAnchor (panning/POI navigation) and
+// promptTooFarPoi (the too-far-for-one-map dialog).
+function formatDistance(distFt) {
+  if (unitSystem === 'metric') {
+    const meters = distFt * FEET_TO_METERS;
+    return meters <= 500 ? `${Math.round(meters)} m` : `${(meters / 1000).toFixed(1)} km`;
+  }
+  return distFt <= 1000 ? `${Math.round(distFt)} ft` : `${(distFt / FEET_PER_MILE).toFixed(1)} mi`;
 }
 
 // § Data ingestion and cleaning pipeline, step 2 (Fetch). searchQuery is the
