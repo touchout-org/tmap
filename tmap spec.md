@@ -28,11 +28,22 @@ Any Nominatim/Overpass error (network failure, rate-limiting, no results, etc.) 
 
 The message field (the on-screen print version of the message display, an ARIA live region) is the single source of truth for anything announced to the user — not the Dot Pad's 20-cell message display or speech output. Whenever something needs to be reported (pan status, scale changes, current-object names under the cursor, label toggle state, etc.), the app updates the message field first; that update then pushes to the Dot Pad message display and separately triggers the ARIA live announcement. The Dot Pad display and speech are downstream reflections of the message field, never independently-driven outputs.
 
-Messages are kept terse by convention (e.g., a found address is truncated to the display's 20 cells at a word boundary, never mid-word) since there's currently no way to see more than what fits in those 20 cells at once. A command for panning the message display to reveal the rest of a longer message is a plausible future addition — not designed yet, flagged here so the terse-message convention isn't mistaken for a hard length limit on what the app can ever report.
+The on-screen/ARIA side is never length-limited — the full message always shows there and is what speech announces. Only the physical Dot Pad's message display has an actual hardware limit (20 cells), so only its copy is paginated, via the **virtual message window** below.
+
+#### Virtual message window
+
+The Dot Pad's message display can only ever show 20 braille cells at once, but a message can be longer than that once translated (see [Braille translator](#braille-translator) — a given piece of text's cell count depends on which braille code is active, since contractions shrink it and capital/number signs expand it). Rather than truncating, the app keeps the full translated message in a virtual window and pages the device through it:
+
+* Whenever a new message is set, it's translated under the currently active braille code (see [Braille translator](#braille-translator)) and the **first** 20-cell-or-fewer chunk is shown automatically.
+* Dots 4+5+6 together show the next chunk; dots 1+2+3 together show the previous one.
+* Chunks always break at a word boundary, never mid-word — the same word-boundary-preserving principle the old single-truncation behavior already used, just applied to every chunk in sequence rather than only the first one. (If a single word is itself longer than 20 cells, that one chunk is hard-cut, same graceful degradation the old truncation had.)
+* If there's no next/previous chunk (already at the last/first one), the edge tone plays (see [Sound cues](#sound-cues)) but nothing else changes — no message-field update, no device write, the display just keeps showing what it already had.
+* Pagination is always computed against the *translated* cell sequence, never the raw source text, since the two can have very different lengths. When the Braille Translation setting changes (see [Settings](#settings)), the currently-displayed message is re-translated under the new code and re-paginated from its first chunk — chunk boundaries don't line up between codes (a contraction-heavy code and a plain one chunk the same text differently), so there's no meaningful "same position" to preserve across a code change.
+* There's no keyboard equivalent for paging — the on-screen/ARIA message is never truncated in the first place, so a keyboard/screen-reader user already has the complete message without needing to page through anything; the 20-cell limit is purely a physical-device constraint.
 
 ### Sound cues
 
-Alongside the message field, a short synthesized tone is a secondary, non-verbal cue for certain events — the first is Edge of Map (see [Pan Behavior](#pan-behavior)), a beep that plays when a pan is rejected. There's no standard way for a web page to trigger the OS/console bell, so cues are short tones generated with the Web Audio API (an oscillator, no external library or audio file needed) — this plays from the computer's own speakers, not the physical Dot Pad, which has no exposed beep/vibrate capability in the vendored SDK.
+Alongside the message field, a short synthesized tone is a secondary, non-verbal cue for certain events — Edge of Map (see [Pan Behavior](#pan-behavior), a beep when a pan is rejected) and the message display's own edge (see [Virtual message window](#virtual-message-window) above, a beep when paging past the first/last chunk) share the same tone. There's no standard way for a web page to trigger the OS/console bell, so cues are short tones generated with the Web Audio API (an oscillator, no external library or audio file needed) — this plays from the computer's own speakers, not the physical Dot Pad, which has no exposed beep/vibrate capability in the vendored SDK.
 
 This is meant as a general pattern, not a one-off for Edge of Map specifically: sound is a plausible secondary cue for a variety of future events (e.g., a save completing, an error, reaching a boundary of some other kind) where a quick non-verbal signal is useful alongside — never instead of — the message field, which remains the single source of truth for what actually happened. Specific additional cues aren't designed yet; this section exists so the pattern (and the "no external library needed" fact) doesn't need rediscovering each time one comes up.
 
@@ -85,6 +96,8 @@ The following table specifies the functions that can be accessed from the app or
 | Open Custom POI ("Drop Pin") dialog | `a` | none |
 | Next POI | `.` | dot 4 |
 | Previous POI | `,` | dot 1 |
+| Next message chunk | none | dots 4+5+6 |
+| Previous message chunk | none | dots 1+2+3 |
 
 Toggling a label setting from the keyboard reports the new state in the message field, in the form "top labels on/off" (etc.), which is mirrored to the Dot Pad message display. As with all message-display updates, the app-side field is the source of truth: it updates first, then pushes to the Dot Pad and triggers the ARIA live announcement — see [Message display architecture](#message-display-architecture).
 

@@ -367,23 +367,151 @@ if (USE_LOCAL_TEST_DATA_CACHE) {
   devCacheBanner.hidden = false;
 }
 
-// § Settings — the full (untruncated) text setMessage last sent, so the
-// Settings dialog can re-send the same message to the device when the
-// Braille Translation setting changes (see btnSettingsOk below) without
-// needing a fresh setMessage call -- the on-screen text hasn't changed,
-// only how the device copy gets encoded.
+// § Message display architecture — the physical message display's fixed
+// size (confirmed via on-screen device-info diagnostic: this hardware
+// reports numberBrailleCellColumns=20, matching the spec). Deliberately
+// a constant here, not read from currentDevice.numberBrailleCellColumns
+// (which sendCurrentMessageChunkToDevice below still does for the
+// actual send): the virtual message window must exist and have a real
+// first chunk ready even before a device is connected, when there's no
+// device to query.
+const MESSAGE_WINDOW_SIZE = 20;
+
+// § Settings — the full (untranslated) text setMessage last sent, so the
+// Settings dialog can rebuild the virtual message window under a newly
+// selected braille code (see btnSettingsOk below) without needing a
+// fresh setMessage call -- the on-screen text/meaning haven't changed,
+// only how the device copy gets encoded and re-paginated.
 let lastMessageText = '';
+
+// § Message display architecture — the virtual message window the 456/123
+// chords page through (see tmap spec.md). messageWindowCells is the full
+// translated cell sequence for lastMessageText under the current
+// brailleCodeSetting; messageWindowChunkStarts is every valid chunk
+// boundary within it (precomputed, not derived reactively per key press
+// -- see computeChunkStarts); messageWindowChunkIndex is which of those
+// chunks is currently shown on the device.
+let messageWindowCells = [];
+let messageWindowChunkStarts = [0];
+let messageWindowChunkIndex = 0;
+
+// § Message display architecture — translates text into cell bitmasks
+// under the current brailleCodeSetting, and separately records every
+// cell-index where a new word begins (i.e. right after a space), which
+// is where a chunk boundary is allowed to fall. Splitting the source
+// text at each space and translating the pieces individually rather
+// than translating the whole string at once gives an identical cell
+// sequence -- none of the three codes' translation logic depends on
+// what's on the other side of a space -- while exposing exactly the
+// boundary information chunking needs.
+function translateCurrentCodeWithBreaks(text) {
+  const segments = text.split(/( )/);
+  const cells = [];
+  const wordBreaks = [0];
+  for (const seg of segments) {
+    if (seg === '') continue;
+    const segCells = brailleCodeSetting === 'ueb1' ? translateGrade1(seg)
+      : brailleCodeSetting === 'ueb2' ? translateGrade2(seg)
+      : textToNabccCells(seg);
+    cells.push(...segCells);
+    if (seg === ' ') wordBreaks.push(cells.length);
+  }
+  return { cells, wordBreaks };
+}
+
+// § Message display architecture — the end position of the chunk that
+// starts at `start`, backing off to the nearest earlier word boundary
+// so a chunk never splits a word, mirroring the old truncateMessage's
+// space-backoff logic but generalized to any chunk in the sequence, not
+// just the first one. Falls back to a hard cut at exactly
+// MESSAGE_WINDOW_SIZE if no word boundary exists in the window (a
+// single word/token longer than the whole display).
+function chunkEndPosition(cellsLength, start, wordBreaks) {
+  const idealEnd = Math.min(start + MESSAGE_WINDOW_SIZE, cellsLength);
+  if (idealEnd >= cellsLength) return idealEnd;
+  let best = idealEnd;
+  let foundBreak = false;
+  for (const b of wordBreaks) {
+    if (b > start && b <= idealEnd) { best = b; foundBreak = true; }
+  }
+  return foundBreak ? best : idealEnd;
+}
+
+// § Message display architecture — every chunk's start position, in
+// order, computed once per rebuild rather than reactively per key press
+// -- so paging forward/back is just moving an index into this array
+// (see the 456/123 chord handlers), not reconstructing where a previous
+// chunk would have started.
+function computeChunkStarts(cells, wordBreaks) {
+  const starts = [0];
+  let pos = 0;
+  while (pos < cells.length) {
+    pos = chunkEndPosition(cells.length, pos, wordBreaks);
+    if (pos < cells.length) starts.push(pos);
+  }
+  return starts;
+}
+
+// § Message display architecture — re-translates lastMessageText (or a
+// freshly-set message) into the virtual window, resetting to the first
+// chunk. Called on every new message and whenever brailleCodeSetting
+// changes (see btnSettingsOk) -- chunk boundaries don't line up between
+// codes anyway (contractions and capital/number signs change cell
+// counts differently), so there's no sensible "same position" to
+// preserve across a code change; starting over at chunk 0 is simplest
+// and most predictable.
+function rebuildMessageWindow(text) {
+  const { cells, wordBreaks } = translateCurrentCodeWithBreaks(text);
+  messageWindowCells = cells;
+  messageWindowChunkStarts = computeChunkStarts(cells, wordBreaks);
+  messageWindowChunkIndex = 0;
+}
+
+// § Message display architecture — sends whichever chunk
+// messageWindowChunkIndex currently points at. No-op if no device is
+// connected (mirrors setMessage's own existing guard).
+function sendCurrentMessageChunkToDevice() {
+  if (!currentDevice) return;
+  const start = messageWindowChunkStarts[messageWindowChunkIndex];
+  const end = messageWindowChunkIndex + 1 < messageWindowChunkStarts.length
+    ? messageWindowChunkStarts[messageWindowChunkIndex + 1]
+    : messageWindowCells.length;
+  const numCells = currentDevice.numberBrailleCellColumns;
+  const zeros = '00'.repeat(numCells);
+  const hex = cellsToMessageHex(messageWindowCells.slice(start, end), numCells);
+  sdk.displayTextData(zeros, currentDevice, DisplayMode.TextMode);
+  sdk.displayTextData(hex, currentDevice, DisplayMode.TextMode);
+}
+
+// § Command / hotkey mapping — dots 4+5+6 together show the next chunk
+// of the current message; dots 1+2+3 together show the previous one. If
+// there's no next/previous chunk, the edge tone plays but the display
+// keeps showing whatever's already there -- no message-field change, no
+// device write, per tmap spec.md § Message display architecture.
+function showNextMessageChunk() {
+  if (messageWindowChunkIndex + 1 < messageWindowChunkStarts.length) {
+    messageWindowChunkIndex++;
+    sendCurrentMessageChunkToDevice();
+  } else {
+    playEdgeTone();
+  }
+}
+function showPreviousMessageChunk() {
+  if (messageWindowChunkIndex > 0) {
+    messageWindowChunkIndex--;
+    sendCurrentMessageChunkToDevice();
+  } else {
+    playEdgeTone();
+  }
+}
 
 // § Message display architecture — the on-screen field is the single source of
 // truth; it updates first, then pushes to the Dot Pad's 20-cell message display.
-// Messages are kept terse throughout: the device only has 20 cells to show
-// them in, and there's no way to pan to see the rest of a longer message yet.
+// The device copy is paginated into MESSAGE_WINDOW_SIZE-cell chunks (see the
+// virtual message window above) rather than truncated -- the on-screen/ARIA
+// side is never limited, only the physical device's own fixed-size display.
 function setMessage(text, deviceDelayMs = 0) {
   lastMessageText = text;
-  // Full text always goes on-screen (and so is what speech/ARIA announces).
-  // Only the device copy is truncated, since that's the only channel with
-  // an actual 20-cell physical limit.
-  //
   // § Message display architecture — the live region is cleared and forced
   // to reflow before being repopulated. Screen readers (confirmed on NVDA)
   // don't reliably treat a same-element textContent change as a fresh
@@ -394,24 +522,14 @@ function setMessage(text, deviceDelayMs = 0) {
   messageDisplay.textContent = '';
   void messageDisplay.offsetHeight;
   messageDisplay.textContent = text;
+  rebuildMessageWindow(text);
   if (currentDevice) {
-    const deviceText = truncateMessage(text, currentDevice.numberBrailleCellColumns);
     if (deviceDelayMs > 0) {
-      setTimeout(() => sendTextToDevice(deviceText, currentDevice), deviceDelayMs);
+      setTimeout(sendCurrentMessageChunkToDevice, deviceDelayMs);
     } else {
-      sendTextToDevice(deviceText, currentDevice);
+      sendCurrentMessageChunkToDevice();
     }
   }
-}
-
-// Truncates to at most maxLen characters, but backs off to the last space
-// rather than cutting a word in half -- e.g. "2632 College Ave, Berkeley"
-// becomes "2632 College Ave," (18 chars), not "2632 College Ave, Be".
-function truncateMessage(text, maxLen = 20) {
-  if (text.length <= maxLen) return text;
-  const cut = text.slice(0, maxLen);
-  const lastSpace = cut.lastIndexOf(' ');
-  return lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
 }
 
 // § Sound cues — secondary, non-verbal feedback alongside the message
@@ -438,8 +556,10 @@ function playTone(frequency, durationMs) {
   oscillator.stop(audioContext.currentTime + durationMs / 1000);
 }
 
-// Low, short "bump" tone for Edge of Map -- see tmap spec.md § Sound cues.
-function playEdgeOfMapTone() {
+// Low, short "bump" tone for a boundary condition -- see tmap spec.md §
+// Sound cues. Shared by Edge of Map (panning past the fetched data) and
+// the message display window (paging past the first/last chunk).
+function playEdgeTone() {
   playTone(220, 150);
 }
 
@@ -498,13 +618,13 @@ btnSettings.addEventListener('click', () => {
 btnSettingsOk.addEventListener('click', () => {
   brailleCodeSetting = settingsBrailleCodeSelect.value;
   settingsDialog.close();
-  // Re-send whatever's already on the message display, re-encoded under
-  // the new setting -- the on-screen text/ARIA announcement don't change
-  // (nothing about the message itself changed), so this calls
-  // sendTextToDevice directly rather than going through setMessage again.
-  if (currentDevice) {
-    sendTextToDevice(truncateMessage(lastMessageText, currentDevice.numberBrailleCellColumns), currentDevice);
-  }
+  // Rebuilds the virtual message window (resets to its first chunk -- see
+  // rebuildMessageWindow) and re-sends it, re-encoded under the new
+  // setting. The on-screen text/ARIA announcement don't change (nothing
+  // about the message itself changed), so this doesn't go through
+  // setMessage again, just its device-facing half.
+  rebuildMessageWindow(lastMessageText);
+  sendCurrentMessageChunkToDevice();
 });
 btnSettingsCancel.addEventListener('click', () => settingsDialog.close());
 
@@ -2632,7 +2752,7 @@ function panMap(direction) {
 
   if (exceedsEdge) {
     setMessage('Edge of Map');
-    playEdgeOfMapTone();
+    playEdgeTone();
     return;
   }
 
@@ -2756,23 +2876,25 @@ const NABCC = new Uint8Array([
   0x0F, 0x1F, 0x17, 0x0E, 0x1E, 0x25, 0x27, 0x3A, 0x2D, 0x3D, 0x35, 0x2A, 0x33, 0x3B, 0x18
 ]);
 
-// Convert a text string to a DotPad message-line hex string (one raw NABCC byte
-// per cell; displayTextData with TextMode applies the pin mapping internally).
-function textToMessageHex(text, numCells) {
-  let hex = '';
-  for (let i = 0; i < numCells; i++) {
-    const ch = i < text.length ? text[i] : ' ';
+// § Settings / § Braille translator — raw NABCC byte per character, no
+// padding/truncation (that's cellsToMessageHex's job, downstream --
+// see translateCurrentCodeWithBreaks, which calls this per space-
+// delimited segment as the "computer8" case alongside
+// translateGrade1/translateGrade2). Street labels use NABCC directly
+// via labelCharacterDots further up the render pipeline, never this.
+function textToNabccCells(text) {
+  const cells = [];
+  for (const ch of text) {
     const code = ch.charCodeAt(0);
-    const b = (code >= 0x20 && code <= 0x7E) ? NABCC[code - 0x20] : 0x00;
-    hex += b.toString(16).padStart(2, '0').toUpperCase();
+    cells.push((code >= 0x20 && code <= 0x7E) ? NABCC[code - 0x20] : 0x00);
   }
-  return hex;
+  return cells;
 }
 
-// § Settings / § Braille translator — same padding/truncation shape as
-// textToMessageHex, but from an array of already-computed 6-dot cell
-// bitmasks (braille-ueb.js's translateGrade1/translateGrade2 output)
-// rather than looking each byte up from raw text via NABCC.
+// § Settings / § Braille translator — pads/truncates an array of
+// already-computed 6-dot cell bitmasks (or NABCC bytes, for the
+// computer8 case -- either way, one byte per cell) to exactly numCells,
+// hex-encoding each as displayTextData expects.
 function cellsToMessageHex(cells, numCells) {
   let hex = '';
   for (let i = 0; i < numCells; i++) {
@@ -2780,23 +2902,6 @@ function cellsToMessageHex(cells, numCells) {
     hex += mask.toString(16).padStart(2, '0').toUpperCase();
   }
   return hex;
-}
-
-function sendTextToDevice(text, device) {
-  // Confirmed via on-screen device-info diagnostic that this hardware
-  // reports numberBrailleCellColumns=20, matching the spec, so back to
-  // trusting the device's own reported value rather than hardcoding it.
-  const numCells = device.numberBrailleCellColumns;
-  const zeros = '00'.repeat(numCells);
-  // § Settings — brailleCodeSetting picks which braille code the message
-  // display uses; only this call site is affected. Street labels always
-  // use textToMessageHex's NABCC byte-per-cell approach further up the
-  // render pipeline (see labelCharacterDots), never this branch.
-  const hex = brailleCodeSetting === 'ueb1' ? cellsToMessageHex(translateGrade1(text), numCells)
-    : brailleCodeSetting === 'ueb2' ? cellsToMessageHex(translateGrade2(text), numCells)
-    : textToMessageHex(text, numCells);
-  sdk.displayTextData(zeros, device, DisplayMode.TextMode);
-  sdk.displayTextData(hex, device, DisplayMode.TextMode);
 }
 
 // Bresenham line/circle rasterization directly into a dot-grid pixel buffer,
@@ -3139,5 +3244,9 @@ sdk.setCallBack(
     // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
     else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
     else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI
+    // § Message display architecture — dots 4+5+6 / 1+2+3 page the
+    // virtual message window forward/back.
+    else if (byte6 === 0x38) showNextMessageChunk();      // dots 4+5+6
+    else if (byte6 === 0x07) showPreviousMessageChunk();  // dots 1+2+3
   }
 );
