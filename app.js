@@ -384,6 +384,14 @@ if (!isChrome()) {
   browserWarning.hidden = false;
 }
 
+// § Screen Layout — Connect Dot Pad receives focus on page load (explicit
+// requirement). The HTML autofocus attribute alone proved unreliable on
+// the real deployed site (element confirmed present and genuinely
+// focusable, but focus didn't actually land there on a real page load) --
+// calling focus() explicitly is the standard, more robust fix for exactly
+// this kind of autofocus flakiness across browsers/tab states.
+btnConnect.focus();
+
 // § Local test data cache — unmissable visual flag (not just a code
 // comment) that this build is serving cached data instead of hitting the
 // real Nominatim/Overpass endpoints, so it can't accidentally slip into a
