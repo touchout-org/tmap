@@ -230,8 +230,7 @@ const btnDownloadSvg = document.getElementById('btn-download-svg');
 const btnSettings = document.getElementById('btn-settings');
 const settingsDialog = document.getElementById('settings-dialog');
 const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
-const btnSettingsOk = document.getElementById('btn-settings-ok');
-const btnSettingsCancel = document.getElementById('btn-settings-cancel');
+const btnSettingsDone = document.getElementById('btn-settings-done');
 
 let hasAnchor = false;
 
@@ -376,9 +375,10 @@ const MESSAGE_WINDOW_SIZE = 20;
 
 // § Settings — the full (untranslated) text setMessage last sent, so the
 // Settings dialog can rebuild the virtual message window under a newly
-// selected braille code (see btnSettingsOk below) without needing a
-// fresh setMessage call -- the on-screen text/meaning haven't changed,
-// only how the device copy gets encoded and re-paginated.
+// selected braille code (see settingsBrailleCodeSelect's change listener
+// below) without needing a fresh setMessage call -- the on-screen
+// text/meaning haven't changed, only how the device copy gets encoded
+// and re-paginated.
 let lastMessageText = '';
 
 // § Message display architecture — the virtual message window the 456/123
@@ -452,11 +452,11 @@ function computeChunkStarts(cells, wordBreaks) {
 // § Message display architecture — re-translates lastMessageText (or a
 // freshly-set message) into the virtual window, resetting to the first
 // chunk. Called on every new message and whenever brailleCodeSetting
-// changes (see btnSettingsOk) -- chunk boundaries don't line up between
-// codes anyway (contractions and capital/number signs change cell
-// counts differently), so there's no sensible "same position" to
-// preserve across a code change; starting over at chunk 0 is simplest
-// and most predictable.
+// changes (see settingsBrailleCodeSelect's change listener) -- chunk
+// boundaries don't line up between codes anyway (contractions and
+// capital/number signs change cell counts differently), so there's no
+// sensible "same position" to preserve across a code change; starting
+// over at chunk 0 is simplest and most predictable.
 function rebuildMessageWindow(text) {
   const { cells, wordBreaks } = translateCurrentCodeWithBreaks(text);
   messageWindowCells = cells;
@@ -593,29 +593,26 @@ btnPanEast.addEventListener('click', () => panMap('east'));
 btnPanWest.addEventListener('click', () => panMap('west'));
 
 // § Braille labels — the checkboxes (living in the Settings dialog, under
-// its own "Braille Labels" heading) are a live view of the shared
+// its own "Braille Options" heading) are a live view of the shared
 // labelZones state (see setLabelZone), not a separately-synced copy: they
-// apply immediately on change, matching the i/j/k/l hotkeys' effect too,
-// regardless of the dialog's own OK/Cancel staging for other controls.
+// apply immediately on change, matching the i/j/k/l hotkeys' effect too.
 for (const zone in labelCheckboxes) {
   labelCheckboxes[zone].addEventListener('change', () => setLabelZone(zone, labelCheckboxes[zone].checked));
 }
 
-// § Settings — unlike the Braille Translation control and Edit Map (which
-// either stage via OK/Cancel or live-apply as a whole separate dialog), the
-// Braille Labels checkboxes inside this same dialog keep their own live-apply
-// behavior: opening the dialog only needs to sync their checked state to
-// match, not stage anything for them. The Braille Translation combo box
-// reflects the currently-committed brailleCodeSetting on every open, but
-// only OK actually commits a new selection; Cancel closes without touching it.
+// § Settings — every control in this dialog is live-apply now (a change
+// takes effect immediately, not gated behind a commit step): opening the
+// dialog only needs to sync each control's displayed value/checked state to
+// match current state, and the dialog's own button just dismisses it.
 btnSettings.addEventListener('click', () => {
   settingsBrailleCodeSelect.value = brailleCodeSetting;
   for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
   settingsDialog.showModal();
 });
-btnSettingsOk.addEventListener('click', () => {
+btnSettingsDone.addEventListener('click', () => settingsDialog.close());
+
+settingsBrailleCodeSelect.addEventListener('change', () => {
   brailleCodeSetting = settingsBrailleCodeSelect.value;
-  settingsDialog.close();
   // Rebuilds the virtual message window (resets to its first chunk -- see
   // rebuildMessageWindow) and re-sends it, re-encoded under the new
   // setting. The on-screen text/ARIA announcement don't change (nothing
@@ -624,7 +621,6 @@ btnSettingsOk.addEventListener('click', () => {
   rebuildMessageWindow(lastMessageText);
   sendCurrentMessageChunkToDevice();
 });
-btnSettingsCancel.addEventListener('click', () => settingsDialog.close());
 
 // § Braille labels — shared toggle used by both the dialog checkboxes and
 // the i/j/k/l hotkeys. Reports the new state in the message field per
