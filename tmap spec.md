@@ -144,8 +144,7 @@ We will refine this behavior as we experiment with the UI.
 
 The scale appears on the screen as a combo box showing the value of the current scale.
 
-* If Traditional Scale is selected for scale type in settings, scale values are "X = Y," where X is the distance on the display and Y is the distance on the map. For example, "1 in = 300 ft" or "3 cm = 1 km."
-* If Display Area is selected for Scale Type in settings, values are of the form "300 feet by 200 feet" or "600 m by 400 m."
+* Scale values are always "X = Y," where X is the distance on the display and Y is the distance on the map. For example, "1 in = 300 ft" or "1 cm = 300 m." (An earlier design considered an alternate Display Area scale format — see [Appendix: Retired Display Area Scale Option](#appendix-retired-display-area-scale-option) — but Traditional Scale is the only format the app will ever offer.)
 * Whenever the scale is adjusted, the new scale appears on the message display.
 
 ### Street importance tiers
@@ -337,7 +336,6 @@ The dialog is organized into sub-sections, each under its own heading:
     * Scale: implemented, live-apply, same as every other control in this dialog. Presets switch between two 9-entry ladders depending on Units:
         * **Imperial**: 1 in = 100, 200, 300, [400], 500, 1000, 1500, 2000, 5000 ft (the original ladder, moved here from a standalone combo box next to the H2 in Screen Layout).
         * **Metric**: 1 cm = 10, 25, 35, [50], 60, 120, 180, 250, 600 m. Chosen as the closest clean round numbers to each Imperial preset's actual real-world footprint (accounting for the fixed inch-to-cm ratio of the physical display, not a naive number-for-number conversion) — see the code comment above `SCALE_PRESETS_M` in `app.js` for the exact math. **By explicit user decision, the two ladders are independent round-number sets, not exact conversions of each other**: the same preset index can describe a slightly different real-world map footprint depending on which unit system is active, and switching Units while a map is showing re-renders it at the new effective footprint for the current preset index.
-    * Scale type: [Traditional] / Display Area — not yet implemented. Display Area's values (e.g., "300 feet by 200 feet") would be calculated from this same set of Traditional Scale presets, rounded as needed for simplicity, rather than authored as a separate preset list.
     * Pan amount: [1/4], 1/2, 3/4, 1 — not yet implemented — in units of display height/width. Horizontal and vertical pan amounts are independent settings, and the actual map distance covered by a pan varies with the current scale.
     * POI distance threshold: [1 mile], 2 miles, 3 miles — not yet implemented.
 
@@ -411,7 +409,7 @@ Also resolved as of 2026-07-08 (see [Data sources](#data-sources), [Pan Behavior
 
 Also resolved as of 2026-07-08 (see [Data ingestion and cleaning pipeline](#data-ingestion-and-cleaning-pipeline-retired), [Divided-road carriageway collapse](#divided-road-carriageway-collapse-retired), [Map density evaluation and tier-based decluttering](#map-density-evaluation-and-tier-based-decluttering-retired) — all since retired, see the linked appendix sections): the street-declutter algorithm — semantic importance tiers plus measured grid density, replacing the placeholder proximity rule — and the divided-road parallel-carriageway handling — candidate-pair detection plus point-correspondence centerline collapse, replacing the earlier "leave it alone" decision — are both now designed, though several thresholds (`densityCellSize`, the density threshold(s), the carriageway max-separation width) remain open for empirical tuning once real data is running on actual hardware.
 
-Also resolved as of 2026-07-08: saved-map versioning is a manageable risk, not a blocking design gap — the app will either migrate legacy archive data if the save format ever changes, or take care not to make changes that would break compatibility with existing saves; no dedicated migration system is required as a feature. Display Area scale presets are calculated from the same Traditional Scale preset list, rounded as needed for simplicity, rather than authored as a separate list — see [Settings](#settings).
+Also resolved as of 2026-07-08: saved-map versioning is a manageable risk, not a blocking design gap — the app will either migrate legacy archive data if the save format ever changes, or take care not to make changes that would break compatibility with existing saves; no dedicated migration system is required as a feature. (This entry originally also resolved a since-retired Display Area preset-values question — Display Area itself was dropped entirely in 2026-07-15, see [Appendix: Retired Display Area Scale Option](#appendix-retired-display-area-scale-option).)
 
 Also resolved as of 2026-07-08 (see [Label placement](#label-placement)): the label-overflow rule. Label priority now reuses the [street importance tiers](#street-importance-tiers) from decluttering (replacing "more segments wins"), the angle rule got a hard 45-degree threshold, and a full placement algorithm (fixed edge order, per-tier positional placement, a 2-pixel whitespace/collision rule, and a final leftover-room pass) defines exactly what happens when there isn't room for every candidate: lower-priority streets are silently skipped, with no "some streets not labeled" indicator — an accepted outcome, not an error state.
 
@@ -440,7 +438,7 @@ Priority tiers as set by the user on 2026-07-08:
 | BLE connection + tactile rendering on Dot Pad | Presentation | |
 | Cursor movement + hit testing + message display | Interaction — pointing | |
 | Pan controls (on-screen buttons + hotkeys) | Interaction — panning | |
-| Scale combo box + scale change (Traditional Scale) | Interaction — zooming | Display Area preset *values* are a P1 settings item — see below |
+| Scale combo box + scale change (Traditional Scale) | Interaction — zooming | Traditional Scale is the only scale format the app will offer — see [Appendix: Retired Display Area Scale Option](#appendix-retired-display-area-scale-option) |
 | Command/hotkey mapping table | Interaction | Done |
 | Pan-past-boundary behavior ("Edge of Map" beep + message) | Interaction — panning | Resolved: rejecting the pan and reporting "Edge of Map" is sufficient for now; fetching more data to pan further is a later enhancement |
 | OSM error reporting (Nominatim/Overpass failures surfaced to the message field) | Data acquisition | Resolved as P0: must be visible for debugging, even before the UX around it is polished |
@@ -454,7 +452,7 @@ Priority tiers as set by the user on 2026-07-08:
 
 | Feature | Category | Notes |
 |---|---|---|
-| Settings dialog (~~units~~, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Units (Imperial/Metric) done — see [Settings](#settings). Remaining items built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. An earlier, minimal experimental tuning-fields surface for the (now-retired) automated decluttering/collapse parameters existed briefly before this dialog — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
+| Settings dialog (~~units~~, pan amount, POI threshold) | Settings | Units (Imperial/Metric) done — see [Settings](#settings). Scale type/Display Area dropped entirely, not just deferred — see [Appendix: Retired Display Area Scale Option](#appendix-retired-display-area-scale-option). Remaining items built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. An earlier, minimal experimental tuning-fields surface for the (now-retired) automated decluttering/collapse parameters existed briefly before this dialog — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Edit Map dialog~~ | Map editing | Done, in a different shape than originally planned here — see [Editing the Map](#editing-the-map) |
 | ~~Download to a local `.svg` file~~ | Downloading | Done — distinct from full My Archives (P2), no account needed; see [Download to Local SVG](#download-to-local-svg) |
 | ~~Braille translator (multi-code: US uncontracted, contracted UEB)~~ | Braille translation | Done — see [Braille translator](#braille-translator); built ahead of Phase 5 (needed as a prerequisite for the rest of Settings, not gated on accounts/auth) |
@@ -511,7 +509,7 @@ Priority tiers as set by the user on 2026-07-08:
 20. ~~Decide cloud storage backend~~ — done: Firebase/Firestore (see [Cloud storage](#cloud-storage)). Implementation itself still happens in this phase.
 21. Google auth integration via Firebase Authentication (see [Authentication](#authentication)).
 22. My Archives (save/load/rename/delete) — distinct from Download, which ships in Phase 3 as a P1 feature needing no account. Format-versioning risk is resolved as a policy (migrate legacy data or avoid breaking format changes), not a system to build — see [Open Questions & Critical Gaps](#open-questions--critical-gaps).
-23. Settings persistence across sessions. Display Area scale presets are already fully defined (calculated from the Traditional Scale list, see [Settings](#settings)) — no longer an open item here.
+23. Settings persistence across sessions.
 24. ~~Braille translator library selection/build (multi-code: formalizing 8-dot computer plus adding US uncontracted and contracted UEB)~~ — done, ahead of the rest of Phase 5 (see [Braille translator](#braille-translator)); built now specifically because it's a prerequisite for the Settings dialog's Braille Translation control, which doesn't depend on accounts/auth.
 
 ## Appendix: Retired Automated Data Cleaning Pipeline
@@ -585,3 +583,11 @@ Replaced an earlier placeholder rule (remove a street if it's within 3 pixels of
 **Rendering:** each way was stamped with a `data-tier="N"` attribute at render time. A scale, pan, or zoom change that crossed a density threshold was applied as a single CSS class swap on the map container — the browser's own selector matching did the filtering, with no per-element JS loop.
 
 **Why it was retired:** the user reported the automated tier-drop kicking in too early in some neighborhoods (Park Slope, Brooklyn) and too late in others (West Berkeley) — a single global `densityCellSize`/threshold pair doesn't fit every street pattern, and there was no way to correct a specific bad call without changing the threshold for the whole map. The replacement, Map Complexity, trades automatic density-awareness for a small, predictable set of manually-selected levels plus fully manual per-street override — see [Map filtering](#map-filtering).
+
+## Appendix: Retired Display Area Scale Option
+
+Never built — dropped at the design stage, 2026-07-15, before any Scale Type control existed in code (Settings' Scale combo box has only ever shown Traditional Scale ratios; see [Scale behavior](#scale-behavior) and [Settings](#settings)).
+
+The original design offered two scale *formats*, chosen via a "Scale Type" setting: **Traditional Scale** ("X = Y," e.g. "1 in = 300 ft" or "1 cm = 300 m" — the display-to-real-world ratio) and **Display Area** ("300 feet by 200 feet" — the real-world size of the whole current viewport). Display Area's values were to be derived arithmetically from the same Traditional Scale preset list, not authored separately.
+
+**Why it was dropped:** on reflection, while designing how [Braille labels](#braille-labels) zones carve space out of the fixed dot grid (see [mapGridBounds and the Braille labels zones](#braille-labels)), the user recognized that the map's actual displayed area is not a fixed quantity — it shrinks and changes aspect ratio whenever a label zone is toggled on or off, independent of the selected scale preset. A "Display Area" reading like "300 feet by 200 feet" would therefore have to change every time a label zone was toggled, even though the scale itself (the display-to-world ratio) hadn't changed — a confusing, constantly-shifting number that doesn't actually describe a stable property of the current scale setting. Traditional Scale's "X = Y" ratio has no such problem: it describes the display-to-world ratio only, which stays constant regardless of which label zones are active. Decision: Traditional Scale is the only scale format this app will ever offer; Scale Type as a setting is dropped entirely, not deferred.

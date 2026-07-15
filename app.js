@@ -1256,10 +1256,10 @@ function getViewportBbox() {
   return viewportBboxForCenter(viewportCenterLat, viewportCenterLon);
 }
 
-// § Scale behavior / § Settings — Traditional Scale is the spec's default
-// Scale Type, now that DOT_PAD_DISPLAY_WIDTH_INCHES is a real measured
-// value rather than a placeholder. (Display Area is still what actually
-// drives the viewport math in viewportSizeFeet() — this is just the label.)
+// § Scale behavior / § Settings — Traditional Scale ("X = Y") is the only
+// scale format this app offers (see tmap spec.md's retired Display Area
+// appendix) -- this is just the label; the real-world viewport math itself
+// lives in viewportSizeFeet().
 function formatScaleLabel(index) {
   return unitSystem === 'metric'
     ? `1 cm = ${SCALE_PRESETS_M[index]} m`
