@@ -367,11 +367,19 @@ if (USE_LOCAL_TEST_DATA_CACHE) {
   devCacheBanner.hidden = false;
 }
 
+// § Settings — the full (untruncated) text setMessage last sent, so the
+// Settings dialog can re-send the same message to the device when the
+// Braille Translation setting changes (see btnSettingsOk below) without
+// needing a fresh setMessage call -- the on-screen text hasn't changed,
+// only how the device copy gets encoded.
+let lastMessageText = '';
+
 // § Message display architecture — the on-screen field is the single source of
 // truth; it updates first, then pushes to the Dot Pad's 20-cell message display.
 // Messages are kept terse throughout: the device only has 20 cells to show
 // them in, and there's no way to pan to see the rest of a longer message yet.
 function setMessage(text, deviceDelayMs = 0) {
+  lastMessageText = text;
   // Full text always goes on-screen (and so is what speech/ARIA announces).
   // Only the device copy is truncated, since that's the only channel with
   // an actual 20-cell physical limit.
@@ -490,6 +498,13 @@ btnSettings.addEventListener('click', () => {
 btnSettingsOk.addEventListener('click', () => {
   brailleCodeSetting = settingsBrailleCodeSelect.value;
   settingsDialog.close();
+  // Re-send whatever's already on the message display, re-encoded under
+  // the new setting -- the on-screen text/ARIA announcement don't change
+  // (nothing about the message itself changed), so this calls
+  // sendTextToDevice directly rather than going through setMessage again.
+  if (currentDevice) {
+    sendTextToDevice(truncateMessage(lastMessageText, currentDevice.numberBrailleCellColumns), currentDevice);
+  }
 });
 btnSettingsCancel.addEventListener('click', () => settingsDialog.close());
 
@@ -2278,14 +2293,14 @@ function currentObjectNames() {
   const nameList = Array.from(names);
   // § Cursor and hit testing — a single feature under the cursor is
   // announced in compacted form (stem + type, e.g. "9th St"); with multiple
-  // features, only the compacted stem is used for each (no type), joined by
-  // " & ", to keep the message from ballooning with repeated street-type
-  // words when several names are packed together.
+  // features, only the compacted stem is used for each (no type), joined
+  // by " and ", to keep the message from ballooning with repeated
+  // street-type words when several names are packed together.
   if (nameList.length === 1) {
     const { stem, type } = compactFeatureName(nameList[0]);
     return type ? `${stem} ${type}` : stem;
   }
-  return nameList.map((name) => compactFeatureName(name).stem).join(' & ');
+  return nameList.map((name) => compactFeatureName(name).stem).join(' and ');
 }
 
 // § POIs — the anchor plus every additional POI, as a flat list of
