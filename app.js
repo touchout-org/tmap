@@ -659,14 +659,21 @@ function renderPoiList() {
 }
 
 // § Additional POIs — pans to whatever POI is currently selected in the
-// list box.
+// list box, announcing just its name rather than a distance/direction
+// from the anchor -- navigating among already-known POIs is a "go to X"
+// action, not a "how far is X" one, unlike an explicit pan or a newly
+// added POI (see panToPoint).
 function panToSelectedPoi() {
   if (poiListSelect.value === 'anchor') {
-    panToPoint(lastAnchorLat, lastAnchorLon);
+    moveViewportAndCursorTo(lastAnchorLat, lastAnchorLon);
+    setMessage(lastAnchorName);
     return;
   }
   const poi = additionalPois[Number(poiListSelect.value)];
-  if (poi) panToPoint(poi.lat, poi.lon);
+  if (poi) {
+    moveViewportAndCursorTo(poi.lat, poi.lon);
+    setMessage(poi.name);
+  }
 }
 
 // § Additional POIs — "Selecting an item from the list box (or arrowing
@@ -684,17 +691,18 @@ poiListSelect.addEventListener('focus', () => {
 });
 
 // § Additional POIs — moves the list box's own selection forward/backward
-// (direction = +1/-1), clamped at either end rather than wrapping (same
-// boundary behavior a real arrow-key move in the list box would have),
-// then applies the same pan-to-selection behavior a change event would.
-// Called explicitly rather than relying on 'change' since setting
-// selectedIndex programmatically never fires it -- this is also what
-// makes the . / , hotkeys and dot4/dot1 below work correctly with only
-// the anchor in the list, same as the list box's own focus-triggered
-// snap-back.
+// (direction = +1/-1), wrapping at either end (advancing past the last
+// entry lands on the first, and vice versa -- unlike the list box's own
+// native arrow-key behavior, which clamps), then applies the same
+// pan-to-selection behavior a change event would. Called explicitly
+// rather than relying on 'change' since setting selectedIndex
+// programmatically never fires it -- this is also what makes the . / ,
+// hotkeys and dot4/dot1 below work correctly with only the anchor in the
+// list, same as the list box's own focus-triggered snap-back.
 function navigatePoiList(direction) {
-  if (poiListSelect.disabled || poiListSelect.options.length === 0) return;
-  poiListSelect.selectedIndex = clamp(poiListSelect.selectedIndex + direction, 0, poiListSelect.options.length - 1);
+  const count = poiListSelect.options.length;
+  if (poiListSelect.disabled || count === 0) return;
+  poiListSelect.selectedIndex = (poiListSelect.selectedIndex + direction + count) % count;
   panToSelectedPoi();
 }
 
@@ -901,13 +909,24 @@ btnEditMapClose.addEventListener('click', () => editMapDialog.close());
 // used for panning to a POI (newly added, or selected from the list), as
 // opposed to panMap's fixed-amount directional step, which never moves the
 // cursor. refreshMap's keepCursorInView shifts the view further if needed
-// to keep the cursor visible, the same as it does after a scale change.
-function panToPoint(lat, lon) {
+// to keep the cursor visible, the same as it does after a scale change. No
+// announcement of its own -- callers report whatever's appropriate (see
+// panToPoint vs. panToSelectedPoi).
+function moveViewportAndCursorTo(lat, lon) {
   viewportCenterLat = lat;
   viewportCenterLon = lon;
   cursorLat = lat;
   cursorLon = lon;
   refreshMap();
+}
+
+// § Pan Behavior / § Additional POIs — moveViewportAndCursorTo, plus the
+// standard distance/direction-from-anchor announcement. Used for an
+// explicit pan and for a newly added POI (see addAdditionalPoi) -- not for
+// navigating among already-known POIs via the list box or ./,, which
+// reports just the POI's own name instead (see panToSelectedPoi below).
+function panToPoint(lat, lon) {
+  moveViewportAndCursorTo(lat, lon);
   announcePositionRelativeToAnchor();
 }
 
