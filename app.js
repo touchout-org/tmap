@@ -218,6 +218,7 @@ const editMapVisibleStreetsList = document.getElementById('edit-map-visible-stre
 const editMapHiddenFeaturesList = document.getElementById('edit-map-hidden-features-list');
 const editMapComplexityList = document.getElementById('edit-map-complexity-list');
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
+const btnDownloadSvg = document.getElementById('btn-download-svg');
 
 let hasAnchor = false;
 
@@ -1190,6 +1191,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   panButtons.forEach((btn) => { btn.disabled = false; });
   btnEditMap.disabled = false;
   btnDropPin.disabled = false;
+  btnDownloadSvg.disabled = false;
   refreshMap();
 
   setMessage(shortName);
@@ -1929,16 +1931,24 @@ function placeLabels(candidates, gridBounds, activeZones) {
   return placed;
 }
 
+// § Label creation — every distinct street/pathway name currently in
+// lastWays, alphabetical -- the input assignBrailleLabels needs, and
+// shared by on-screen/on-device label placement (below) and the SVG
+// export's street metadata (see buildExportSvg), so both always agree
+// on what a given name's label resolves to.
+function allNamesSorted() {
+  return Array.from(new Set(
+    lastWays.map((way) => way.tags && way.tags.name).filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b));
+}
+
 // § Label placement — top-level entry point: labels every street name
 // currently in lastWays (per spec, uniqueness spans the whole fetch, not
 // just what's visible), then places labels for whatever's actually
 // visible right now against the current viewport and active label zones.
 function computeLabelPlacements() {
   if (!lastBbox) return { top: [], right: [], bottom: [], left: [] };
-  const allNames = Array.from(new Set(
-    lastWays.map((way) => way.tags && way.tags.name).filter(Boolean)
-  )).sort((a, b) => a.localeCompare(b));
-  const labels = assignBrailleLabels(allNames);
+  const labels = assignBrailleLabels(allNamesSorted());
   const viewportBbox = getViewportBbox();
   const gridBounds = mapGridBounds();
   const candidates = collectLabelCandidates(visibleWays(), viewportBbox, gridBounds, labels);
@@ -2283,6 +2293,139 @@ function visibleWays() {
     way.tier <= maxTier
   );
 }
+
+// § Download to Local SVG — lastWays/allPois() minus only explicitly
+// hidden features. Deliberately its own filter, not visibleWays()/
+// visiblePois(): the export represents the underlying map data, not the
+// current display, so neither Map Complexity's tier cutoff nor
+// cursorOnlyMode's temporary "show only the cursor" display trick should
+// affect what's in the file -- only Hidden Features (an explicit,
+// persistent user decision) does.
+function exportVisibleWays() {
+  return lastWays.filter((way) => !hiddenStreetNames.has(way.tags && way.tags.name));
+}
+
+function exportVisiblePois() {
+  return allPois().filter((poi) => !hiddenPoiNames.has(poi.name));
+}
+
+// § Download to Local SVG — arbitrary round canvas size, unrelated to the
+// Dot Pad's dot-grid units -- this file has no physical-device audience.
+const EXPORT_SVG_SIZE = 1000;
+
+// § Download to Local SVG — projects lat/lon into the export's own
+// canvas, scoped to the full fetched square (lastBbox) rather than the
+// current viewport, so the file always shows the complete fetched area
+// regardless of what's currently panned into view on screen.
+function projectToExportUnits(lat, lon) {
+  return {
+    x: ((lon - lastBbox.west) / (lastBbox.east - lastBbox.west)) * EXPORT_SVG_SIZE,
+    y: ((lastBbox.north - lat) / (lastBbox.north - lastBbox.south)) * EXPORT_SVG_SIZE
+  };
+}
+
+// § Download to Local SVG — builds the export document per tmap spec.md's
+// own section: full fetched extent (not the current viewport/pan/scale),
+// Hidden Features excluded but Map Complexity ignored, no placement/dot/
+// zone geometry, streets grouped by (name, highway, tier) with metadata
+// attributes, POIs with just their name. Detached from the live page's
+// own SVG -- built fresh each time, never appended to the DOM. Returns
+// null if there's no map loaded yet.
+function buildExportSvg() {
+  if (!lastBbox) return null;
+  const svgNs = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNs, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${EXPORT_SVG_SIZE} ${EXPORT_SVG_SIZE}`);
+  svg.setAttribute('width', EXPORT_SVG_SIZE);
+  svg.setAttribute('height', EXPORT_SVG_SIZE);
+
+  // Basic default styling, embedded directly so the file is viewable on
+  // its own without an external stylesheet.
+  const style = document.createElementNS(svgNs, 'style');
+  style.textContent = '.street { fill: none; stroke: #555; stroke-width: 1.5; } .poi { fill: #1a1a1a; }';
+  svg.appendChild(style);
+
+  const labels = assignBrailleLabels(allNamesSorted());
+
+  // Group by (name, highway, tier) -- a name legitimately spanning more
+  // than one highway class or tier (e.g. a mix of residential and
+  // footway segments sharing a name) gets a separate group per
+  // combination, rather than merging data that doesn't actually
+  // describe the same kind of way.
+  const groups = new Map();
+  for (const way of exportVisibleWays()) {
+    const name = way.tags && way.tags.name;
+    if (!name || !way.geometry || way.geometry.length < 2) continue;
+    const highway = (way.tags && way.tags.highway) || '';
+    const key = `${name} ${highway} ${way.tier}`;
+    if (!groups.has(key)) groups.set(key, { name, highway, tier: way.tier, ways: [] });
+    groups.get(key).ways.push(way);
+  }
+
+  for (const { name, highway, tier, ways } of groups.values()) {
+    const { stem, type } = compactFeatureName(name);
+    const g = document.createElementNS(svgNs, 'g');
+    g.setAttribute('data-name', name);
+    g.setAttribute('data-stem', stem);
+    g.setAttribute('data-type', type);
+    g.setAttribute('data-label', labels.get(name) || '');
+    g.setAttribute('data-highway', highway);
+    g.setAttribute('data-tier', String(tier));
+    for (const way of ways) {
+      const points = way.geometry
+        .map((pt) => {
+          const p = projectToExportUnits(pt.lat, pt.lon);
+          return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+        })
+        .join(' ');
+      const line = document.createElementNS(svgNs, 'polyline');
+      line.setAttribute('points', points);
+      line.setAttribute('class', 'street');
+      g.appendChild(line);
+    }
+    svg.appendChild(g);
+  }
+
+  const poiSize = EXPORT_SVG_SIZE * 0.02;
+  for (const poi of exportVisiblePois()) {
+    const p = projectToExportUnits(poi.lat, poi.lon);
+    const rect = document.createElementNS(svgNs, 'rect');
+    rect.setAttribute('x', (p.x - poiSize / 2).toFixed(1));
+    rect.setAttribute('y', (p.y - poiSize / 2).toFixed(1));
+    rect.setAttribute('width', poiSize.toFixed(1));
+    rect.setAttribute('height', poiSize.toFixed(1));
+    rect.setAttribute('data-name', poi.name);
+    rect.setAttribute('class', 'poi');
+    svg.appendChild(rect);
+  }
+
+  return svg;
+}
+
+// § Download to Local SVG — filesystem-safe filename, since the anchor's
+// short address (spaces, commas) isn't guaranteed clean.
+function sanitizeExportFilename(s) {
+  return s.replace(/[\\/:*?"<>|]/g, '').trim();
+}
+
+// § Download to Local SVG — serializes buildExportSvg's document and
+// triggers a browser download, named after the anchor's short address --
+// there's no user-provided "map name" for this quick-download path,
+// unlike My Archives.
+function downloadExportSvg() {
+  const svg = buildExportSvg();
+  if (!svg) return;
+  const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([xml], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${sanitizeExportFilename(lastAnchorName)}.svg`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+btnDownloadSvg.addEventListener('click', downloadExportSvg);
 
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
 // acceleration. Shared by both the arrow keys and the Dot Pad's dots 3/2/5/6.
