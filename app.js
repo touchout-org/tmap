@@ -203,9 +203,6 @@ const btnPanSouth = document.getElementById('btn-pan-south');
 const btnPanEast = document.getElementById('btn-pan-east');
 const btnPanWest = document.getElementById('btn-pan-west');
 const panButtons = [btnPanNorth, btnPanSouth, btnPanEast, btnPanWest];
-const btnLabels = document.getElementById('btn-labels');
-const labelsDialog = document.getElementById('labels-dialog');
-const btnLabelsClose = document.getElementById('btn-labels-close');
 const labelCheckboxes = {
   top: document.getElementById('label-top'),
   bottom: document.getElementById('label-bottom'),
@@ -595,24 +592,25 @@ btnPanSouth.addEventListener('click', () => panMap('south'));
 btnPanEast.addEventListener('click', () => panMap('east'));
 btnPanWest.addEventListener('click', () => panMap('west'));
 
-// § Braille labels — the dialog checkboxes are a live view of the shared
-// labelZones state (see setLabelZone), not a separately-synced copy: they're
-// set to match on every open, matching the i/j/k/l hotkeys' effect too.
-btnLabels.addEventListener('click', () => {
-  for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
-  labelsDialog.showModal();
-});
-btnLabelsClose.addEventListener('click', () => labelsDialog.close());
+// § Braille labels — the checkboxes (living in the Settings dialog, under
+// its own "Braille Labels" heading) are a live view of the shared
+// labelZones state (see setLabelZone), not a separately-synced copy: they
+// apply immediately on change, matching the i/j/k/l hotkeys' effect too,
+// regardless of the dialog's own OK/Cancel staging for other controls.
 for (const zone in labelCheckboxes) {
   labelCheckboxes[zone].addEventListener('change', () => setLabelZone(zone, labelCheckboxes[zone].checked));
 }
 
-// § Settings — unlike Edit Map/Braille Labels (both live-apply, no Save/
-// Cancel), Settings stages its change: the combo box reflects the
-// currently-committed brailleCodeSetting on every open, but only OK
-// actually commits a new selection; Cancel closes without touching it.
+// § Settings — unlike the Braille Translation control and Edit Map (which
+// either stage via OK/Cancel or live-apply as a whole separate dialog), the
+// Braille Labels checkboxes inside this same dialog keep their own live-apply
+// behavior: opening the dialog only needs to sync their checked state to
+// match, not stage anything for them. The Braille Translation combo box
+// reflects the currently-committed brailleCodeSetting on every open, but
+// only OK actually commits a new selection; Cancel closes without touching it.
 btnSettings.addEventListener('click', () => {
   settingsBrailleCodeSelect.value = brailleCodeSetting;
+  for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
   settingsDialog.showModal();
 });
 btnSettingsOk.addEventListener('click', () => {

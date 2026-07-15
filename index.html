@@ -20,8 +20,6 @@
 
   <div id="anchor-row">
     <h2 id="anchor-heading" hidden></h2>
-    <label for="scale-select">Scale</label>
-    <select id="scale-select" disabled></select>
   </div>
 
   <div id="map-row">
@@ -66,7 +64,6 @@
     <button id="btn-connect" type="button">Connect Dot Pad</button>
     <button id="btn-disconnect" type="button" hidden>Disconnect Dot Pad</button>
     <button id="btn-edit-map" type="button" disabled>Edit map...</button>
-    <button id="btn-labels" type="button">Braille Labels...</button>
     <button id="btn-download-svg" type="button" disabled>Download SVG</button>
     <button id="btn-settings" type="button">Settings...</button>
   </div>
@@ -92,8 +89,18 @@
     <button id="btn-edit-map-close" type="button">Close</button>
   </dialog>
 
-  <dialog id="labels-dialog" aria-labelledby="labels-dialog-heading">
-    <h3 id="labels-dialog-heading">Braille Labels</h3>
+  <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">
+    <h3 id="settings-dialog-heading">Settings</h3>
+    <div>
+      <label for="settings-braille-code">Braille Translation</label>
+      <select id="settings-braille-code">
+        <option value="computer8">8-dot computer braille</option>
+        <option value="ueb1">English Uncontracted</option>
+        <option value="ueb2" selected>English Contracted</option>
+      </select>
+    </div>
+
+    <h4>Braille Labels</h4>
     <p>Choose which edges of the display show braille street labels.</p>
     <div>
       <input type="checkbox" id="label-top">
@@ -111,19 +118,20 @@
       <input type="checkbox" id="label-right">
       <label for="label-right">Right</label>
     </div>
-    <button id="btn-labels-close" type="button">Close</button>
-  </dialog>
 
-  <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">
-    <h3 id="settings-dialog-heading">Settings</h3>
+    <h4>Distance and Scale</h4>
     <div>
-      <label for="settings-braille-code">Braille Translation</label>
-      <select id="settings-braille-code">
-        <option value="computer8">8-dot computer braille</option>
-        <option value="ueb1">English Uncontracted</option>
-        <option value="ueb2" selected>English Contracted</option>
+      <label for="settings-units">Units</label>
+      <select id="settings-units" disabled>
+        <option value="imperial" selected>Imperial</option>
+        <option value="metric">Metric</option>
       </select>
     </div>
+    <div>
+      <label for="scale-select">Scale</label>
+      <select id="scale-select" disabled></select>
+    </div>
+
     <button id="btn-settings-ok" type="button">OK</button>
     <button id="btn-settings-cancel" type="button">Cancel</button>
   </dialog>

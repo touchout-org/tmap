@@ -55,18 +55,17 @@ Top to bottom, left to right:
 
 * H1: "Welcome to DotTMAP"
 * Edit field: "Enter an address or location to get started:" [edit field], Search button. Once the anchor POI has been set, the label changes to "Enter another nearby address or location (optional)" — reflecting that the field is now for adding [additional POIs](#additional-pois) rather than starting the map.
-* Below the search: H2 with the found address (anchor POI). To the right of the H2, the scale combo box.
+* Below the search: H2 with the found address (anchor POI).
 * Below the H2: the visual representation of the map.
 * Immediately below the map: a print version of the message display (live ARIA region).
 * Below the message box, set off by a horizontal rule and an H3 "Controls," left to right:
      * "Connect Dot Pad" / "Disconnect Dot Pad" (from the Dot Pad SDK) — only one is ever visible at a time, based on current connection state: "Connect Dot Pad" when no device is connected, "Disconnect Dot Pad" once one is. The other is hidden entirely rather than shown disabled. Connecting or disconnecting reports status through the message field, per [Message display architecture](#message-display-architecture)
      * "Edit map..."
-     * "Braille Labels..."
      * "Download SVG" — see [Download to Local SVG](#download-to-local-svg)
-     * "Settings..." — see [Settings](#settings). Introduced as its own button, separate from account management, since Settings is now partly built while accounts/auth (Phase 5) is not; "Account..." below is scoped to sign-in/cloud-save concerns only, not general app settings.
+     * "Settings..." — see [Settings](#settings). Introduced as its own button, separate from account management, since Settings is now partly built while accounts/auth (Phase 5) is not; "Account..." below is scoped to sign-in/cloud-save concerns only, not general app settings. The Braille Labels checkboxes and the scale control both live inside this dialog now (see [Settings](#settings)) rather than as their own main-window controls — there is no longer a standalone "Braille Labels..." button or a scale combo box next to the H2.
      * "My Archives..."
      * "Account..."
-* To the right of the map (and below the scale combo box): a group called "Move Map," arranged in a plus sign, with North, South, East, and West buttons.
+* To the right of the map: a group called "Move Map," arranged in a plus sign, with North, South, East, and West buttons.
 
 ### Command / hotkey mapping
 
@@ -322,15 +321,18 @@ Implemented as `braille-ueb.js`, a standalone module used only by the message di
 
 Default values in [brackets]. Before settings are implemented, we set default values but use variables to ensure settings-ready architecture.
 
-The Settings dialog (opened via the "Settings..." button — see [Screen Layout](#screen-layout)) is the first of these to get a real control, and establishes the pattern the rest will follow when built: unlike Edit Map and Braille Labels (both live-apply, no Save/Cancel step), Settings **stages** its changes — the dialog's controls reflect the currently-committed values every time it opens, but a change only takes effect when OK is clicked; Cancel closes the dialog and discards whatever was changed, leaving the previous values in place.
+The Settings dialog (opened via the "Settings..." button — see [Screen Layout](#screen-layout)) is the first of these to get a real control, and establishes the pattern the rest will follow when built: unlike Edit Map (fully live-apply, no Save/Cancel step), the dialog **stages** most of its changes — controls reflect the currently-committed values every time it opens, but a change only takes effect when OK is clicked; Cancel closes the dialog and discards whatever was changed, leaving the previous values in place. Two controls are the exception and stay live-apply even inside this staged dialog — see the Braille Labels and Scale entries below.
 
-* Metric / [Imperial]
-* Map scale options: 1 in = 100, 200, 300, [400], 500, 1000, 1500, 2000, 5000
-* Scale type: [Traditional] / Display Area — Display Area's values (e.g., "300 feet by 200 feet") are calculated from this same set of Traditional Scale presets, rounded as needed for simplicity, rather than authored as a separate preset list
-* Pan amount: [1/4], 1/2, 3/4, 1 — in units of display height/width. Horizontal and vertical pan amounts are independent settings, and the actual map distance covered by a pan varies with the current scale.
-* **Braille Translation: 8-dot computer braille, English Uncontracted, [English Contracted]** — implemented. Only affects the message display; see [Braille translator](#braille-translator) above for what each option actually does and where the data comes from.
-* Braille labels (4 checkboxes): left, right, top, bottom — [none checked]. These are the same 4 checkboxes exposed by the "Braille Labels..." button in Screen Layout, not a separate control — deliberately kept off the main page and out of the general Settings dialog, in their own dedicated dialog.
-* POI distance threshold: [1 mile], 2 miles, 3 miles
+The dialog is organized into sub-sections, each under its own heading:
+
+* **Braille Translation: 8-dot computer braille, English Uncontracted, [English Contracted]** — implemented, staged (OK/Cancel). Only affects the message display; see [Braille translator](#braille-translator) above for what each option actually does and where the data comes from.
+* **"Braille Labels" heading** — the same 4 checkboxes (left, right, top, bottom — [none checked]) previously exposed by a standalone "Braille Labels..." button/dialog in Screen Layout; that separate button and dialog are gone, this is now their only home. **Live-apply, not staged**: each checkbox takes effect immediately on change, the same as before the move, regardless of whether OK or Cancel is eventually clicked for the rest of the dialog. Opening the dialog syncs the checkboxes to the current state, same as any live-apply control.
+* **"Distance and Scale" heading**:
+    * Units: Metric / [Imperial] — **placeholder, not yet implemented.** The control is present and disabled; the app is hardcoded to Imperial units (feet/miles) throughout until this is built.
+    * Scale: implemented, the same 9 presets as always (1 in = 100, 200, 300, [400], 500, 1000, 1500, 2000, 5000 ft), moved here from a standalone combo box next to the H2 in Screen Layout. **Live-apply, not staged**, same as before the move — a change takes effect immediately, not gated on OK.
+    * Scale type: [Traditional] / Display Area — not yet implemented. Display Area's values (e.g., "300 feet by 200 feet") would be calculated from this same set of Traditional Scale presets, rounded as needed for simplicity, rather than authored as a separate preset list.
+    * Pan amount: [1/4], 1/2, 3/4, 1 — not yet implemented — in units of display height/width. Horizontal and vertical pan amounts are independent settings, and the actual map distance covered by a pan varies with the current scale.
+    * POI distance threshold: [1 mile], 2 miles, 3 miles — not yet implemented.
 
 ## Download to Local SVG
 
@@ -427,7 +429,7 @@ Priority tiers as set by the user on 2026-07-08:
 | ~~Same-name street de-duplication filtering~~ | Data cleaning | Built, then retired along with the rest of the automated pipeline in favor of manual filtering — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | SVG map rendering (on screen) | Presentation | Must work standalone with no Dot Pad connected, per Hardware requirement |
 | Chrome browser check + warning | Presentation | Gates BLE connectivity (Web Bluetooth is Chromium-only); non-blocking |
-| Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Sit in the Controls row alongside Edit map/Braille Labels/Download SVG/My Archives/Settings |
+| Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Sit in the Controls row alongside Edit map/Download SVG/My Archives/Settings (Braille Labels is no longer its own Controls-row button — its checkboxes moved into the Settings dialog, see [Settings](#settings)) |
 | BLE connection + tactile rendering on Dot Pad | Presentation | |
 | Cursor movement + hit testing + message display | Interaction — pointing | |
 | Pan controls (on-screen buttons + hotkeys) | Interaction — panning | |
