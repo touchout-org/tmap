@@ -51,6 +51,7 @@ Top to bottom, left to right:
      * "Connect Dot Pad" / "Disconnect Dot Pad" (from the Dot Pad SDK) — only one is ever visible at a time, based on current connection state: "Connect Dot Pad" when no device is connected, "Disconnect Dot Pad" once one is. The other is hidden entirely rather than shown disabled. Connecting or disconnecting reports status through the message field, per [Message display architecture](#message-display-architecture)
      * "Edit map..."
      * "Braille Labels..."
+     * "Download SVG" — see [Download to Local SVG](#download-to-local-svg)
      * "My Archives..."
      * "Account and settings..."
 * To the right of the map (and below the scale combo box): a group called "Move Map," arranged in a plus sign, with North, South, East, and West buttons.
@@ -302,6 +303,43 @@ Default values in [brackets]. Before settings are implemented, we set default va
 * Braille labels (4 checkboxes): left, right, top, bottom — [none checked]. These are the same 4 checkboxes exposed by the "Braille Labels..." button in Screen Layout, not a separate control — deliberately kept off the main page and out of the general Settings dialog, in their own dedicated dialog.
 * POI distance threshold: [1 mile], 2 miles, 3 miles
 
+## Download to Local SVG
+
+The "Download SVG" button (see [Screen Layout](#screen-layout)) saves the current map as a local `.svg` file, immediately, no account and no prior save required — distinct from "My Archives" (see [Saving and exporting](#saving-and-exporting)), which is a full cloud-backed save/load system gated behind sign-in.
+
+### Scope
+
+The export represents the *full fetched extent* around the anchor — the same square region [Data sources](#data-sources) fetches, not the current on-screen pan/scale/viewport. Placement, panning, and scale are all properties of how the map happens to be displayed right now, not properties of the underlying map data, so none of them affect what's in the file:
+
+* **Streets and pathways**: every way not explicitly hidden via [Editing the Map](#editing-the-map)'s Hidden Features list. Map Complexity does **not** filter the export — a street hidden only by the current complexity cutoff is still included, since complexity is a display-time simplification, not a statement about what belongs in the data. (This means the export's own street filter checks only `hiddenStreetNames` — it does not reuse the app's `visibleWays()`, which also applies the Map Complexity tier cutoff.)
+* **POIs**: every POI not explicitly hidden (the anchor plus any additional POIs), each carrying its name.
+* **No label placement, dot patterns, or label-zone geometry** are included at all — a renderer that opens this file later is free to make its own placement decisions for whatever labeling scheme it wants to use, if any. The abbreviated label each street currently resolves to *is* included as metadata (see below) — it's the placement of that label that's excluded, not its existence.
+
+### Coordinate system
+
+The export projects lat/lon the same way the on-screen map does, but scoped to the full fetched square (`lastBbox`) rather than the current viewport, so the file always shows the complete fetched area regardless of whatever's currently panned into view. The canvas is a plain square viewBox in arbitrary round units (`0 0 1000 1000`) — unlike the on-screen SVG, this has no physical Dot Pad audience, so nothing here is tied to the device's dot-grid conventions.
+
+Streets and POIs render with simple default styling (thin gray stroke for streets, small dark squares for POIs, roughly matching the on-screen look) so the file is directly viewable and useful on its own, not just as a data container for a custom renderer.
+
+### Street metadata
+
+Streets are grouped by the combination of **(name, highway class, tier)** — not by name alone — so a name that legitimately spans more than one highway class or tier (e.g. a mix of residential and footway segments sharing a name) gets a separate group per combination, rather than merging data that doesn't actually describe the same kind of way. Each group is a `<g>` element wrapping that group's polylines, carrying:
+
+* `data-name` — the full OSM `name`, unmodified
+* `data-stem` — the compacted stem (see [Feature name compacting](#feature-name-compacting))
+* `data-type` — the compacted street-type abbreviation
+* `data-label` — the abbreviated label this name currently resolves to via [Label creation](#label-creation)'s algorithm. Uniqueness is computed the same way as always — across every name in the full fetch, not just the exported subset — so this always matches whatever label would actually show on screen or on the Dot Pad if braille labels were turned on right now, even for a street that's otherwise excluded from being labeled today for unrelated reasons (e.g. it lost a placement collision).
+* `data-highway` — the raw OSM `highway` tag value
+* `data-tier` — the numeric [street importance tier](#street-importance-tiers)
+
+### POI metadata
+
+Each visible POI is a marker element carrying `data-name` — its name, unmodified. POIs don't get compacted stem/type/label metadata — they have no highway class or type suffix concept the way a street does.
+
+### File naming
+
+Saved as `[anchor short address].svg` (sanitized for filesystem-safe characters) — the same short-address style already used for spoken/brailled POI references elsewhere in the app (`formatShortAddress`). There's no user-provided "map name" for this quick-download path, unlike My Archives.
+
 ## Accounts and Data
 
 ### Authentication
@@ -360,7 +398,7 @@ Priority tiers as set by the user on 2026-07-08:
 | ~~Same-name street de-duplication filtering~~ | Data cleaning | Built, then retired along with the rest of the automated pipeline in favor of manual filtering — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | SVG map rendering (on screen) | Presentation | Must work standalone with no Dot Pad connected, per Hardware requirement |
 | Chrome browser check + warning | Presentation | Gates BLE connectivity (Web Bluetooth is Chromium-only); non-blocking |
-| Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Sit in the Controls row alongside Edit map/Braille Labels/My Archives/Settings |
+| Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Sit in the Controls row alongside Edit map/Braille Labels/Download SVG/My Archives/Settings |
 | BLE connection + tactile rendering on Dot Pad | Presentation | |
 | Cursor movement + hit testing + message display | Interaction — pointing | |
 | Pan controls (on-screen buttons + hotkeys) | Interaction — panning | |
@@ -380,7 +418,7 @@ Priority tiers as set by the user on 2026-07-08:
 |---|---|---|
 | Settings dialog (units, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. An earlier, minimal experimental tuning-fields surface for the (now-retired) automated decluttering/collapse parameters existed briefly before this dialog — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Edit Map dialog~~ | Map editing | Done, in a different shape than originally planned here — see [Editing the Map](#editing-the-map) |
-| Download to a local `.svg` file | Downloading | Distinct from full My Archives (P2) — no account needed |
+| Download to a local `.svg` file | Downloading | Distinct from full My Archives (P2) — no account needed; design complete, see [Download to Local SVG](#download-to-local-svg) |
 | Braille translator (multi-code: US uncontracted, contracted UEB) | Braille translation | Resolved: baseline 8-dot computer output ships early via the reused DotSVG module, no translator needed; building the full multi-code translator is phased into Phase 5 as an external dependency |
 | ~~Large-scale street decluttering algorithm~~ | Large-scale decluttering | Built (semantic tiers + measured grid density), then retired in favor of the manual Map Complexity filter — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Divided-road carriageway collapse~~ | Large-scale decluttering | Built, then retired along with the rest of the automated pipeline — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
@@ -422,7 +460,7 @@ Priority tiers as set by the user on 2026-07-08:
 
 14. Additional POIs, threshold-distance modal, POI list box and panning-on-select.
 15. ~~Edit Map dialog~~ — done, though the final shape diverged substantially from this list's original "feature checkboxes, save/cancel" description during hands-on testing: see [Editing the Map](#editing-the-map) for the current POIs / Visible Streets / Hidden Features / Map Complexity design (clickable list items, no checkboxes, immediate effect, no Save/Cancel).
-16. Download to a local `.svg` file — no account dependency, so it doesn't need to wait for Phase 5.
+16. Download to a local `.svg` file — no account dependency, so it doesn't need to wait for Phase 5. Design complete, see [Download to Local SVG](#download-to-local-svg); not yet implemented.
 
 **Phase 4 — Braille label content (builds on the Phase 1 zone infrastructure)**
 
