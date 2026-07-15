@@ -772,7 +772,7 @@ btnPoiCancel.addEventListener('click', () => {
 // pans to center it and moves the cursor there (announcing distance/
 // direction from the anchor, same as an explicit pan).
 function addAdditionalPoi(shortName, lat, lon) {
-  additionalPois.push({ name: shortName, lat, lon });
+  additionalPois.push({ name: compactedDisplayName(shortName), lat, lon });
   renderPoiList();
   panToPoint(lat, lon);
 }
@@ -1331,7 +1331,13 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   lastWays = processWays(lastRawWays);
   lastAnchorLat = lat;
   lastAnchorLon = lon;
-  lastAnchorName = shortName;
+  // § Feature name compacting — compacted once here at creation time
+  // (e.g. "1400 Hearst Avenue" -> "1400 Hearst Ave"), not left for each
+  // display site to compact on the fly -- everywhere this name is later
+  // shown or spoken (POI list, Edit Map dialog, nav announcements) just
+  // reads it directly.
+  const compactedName = compactedDisplayName(shortName);
+  lastAnchorName = compactedName;
 
   // § Editing the Map — a brand-new anchor is a brand-new feature set;
   // whatever was hidden on the discarded map doesn't carry over.
@@ -1359,7 +1365,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   btnDownloadSvg.disabled = false;
   refreshMap();
 
-  setMessage(shortName);
+  setMessage(compactedName);
 }
 
 function clamp(value, min, max) {
@@ -1495,7 +1501,7 @@ const STREET_TYPE_ABBREVIATIONS = {
   road: 'Rd',
   row: 'Row',
   square: 'Sq',
-  street: 'St',
+  street: 'St.',
   terrace: 'Ter',
   trail: 'Trl',
   walk: 'Walk',
@@ -1582,6 +1588,16 @@ function splitStreetType(name) {
 function compactFeatureName(name) {
   const { stem, type } = splitStreetType(name);
   return { stem: convertOrdinalWords(stem), type };
+}
+
+// § Feature name compacting — stem and type space-joined into the single
+// display string used everywhere a compacted name is actually shown or
+// spoken (cursor hit-test messages, POI names -- see addAdditionalPoi/
+// showAnchor). Degrades gracefully the same way compactFeatureName
+// itself does: a name with no recognized type passes through unchanged.
+function compactedDisplayName(name) {
+  const { stem, type } = compactFeatureName(name);
+  return type ? `${stem} ${type}` : stem;
 }
 
 // § Braille labels / § Label creation — ported from the OSM Data Mine
@@ -2417,10 +2433,18 @@ function currentObjectNames() {
   // by " and ", to keep the message from ballooning with repeated
   // street-type words when several names are packed together.
   if (nameList.length === 1) {
-    const { stem, type } = compactFeatureName(nameList[0]);
-    return type ? `${stem} ${type}` : stem;
+    return compactedDisplayName(nameList[0]);
   }
-  return nameList.map((name) => compactFeatureName(name).stem).join(' and ');
+  // § Cursor and hit testing — sorted alphabetically by stem (not left in
+  // whatever order the hit-test scan happened to find them) so the exact
+  // same set of objects always produces the exact same message, no matter
+  // which one the scan reaches first as the cursor moves pixel by pixel
+  // through an intersection -- otherwise "Virginia and Shattuck" and
+  // "Shattuck and Virginia" would both fire for the same real-world
+  // situation, one right after the other, as a spurious re-announcement.
+  const stems = nameList.map((name) => compactFeatureName(name).stem);
+  stems.sort((a, b) => a.localeCompare(b));
+  return stems.join(' and ');
 }
 
 // § POIs — the anchor plus every additional POI, as a flat list of
@@ -2618,8 +2642,11 @@ function moveCursor(dx, dy) {
   cursorLon = newPos.lon;
   updateCursorVisual();
 
-  const names = currentObjectNames();
-  setMessage(names || 'No street');
+  // § Cursor and hit testing — nothing under the cursor blanks the message
+  // display rather than announcing "No street": an absence isn't worth
+  // interrupting/re-announcing over, especially while sweeping the cursor
+  // across open space between features.
+  setMessage(currentObjectNames() || '');
 
   if (currentDevice) {
     sendGraphicToDevice(currentDevice);

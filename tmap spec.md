@@ -130,12 +130,12 @@ If the cursor is at the edge of the current view, moving it further in that dire
 
 Any object that intersects with the edge of the circle is considered "current." If more than one object intersects the edge, there is more than one current object. Current objects are identified by name.
 
-Current object names are displayed in the message field and on the message display.
+Current object names are displayed in the message field and on the message display. If nothing is current, the message display is simply blanked — no "no street" or similar placeholder text, since an absence isn't worth interrupting/re-announcing over, especially while sweeping the cursor across open space between features.
 
-We display only unique names for current objects: if several current objects share the same name, we display that name once. Names are run through [feature name compacting](#feature-name-compacting) before display, same as braille labels — this applies uniformly to streets and POIs alike (an address-style POI name like "1400 Hearst Avenue" compacts to "1400 Hearst Ave" the same way a street does; a freeform name with no recognized type or ordinal word just passes through unchanged).
+We display only unique names for current objects: if several current objects share the same name, we display that name once. Names are run through [feature name compacting](#feature-name-compacting) before display, same as braille labels — this applies uniformly to streets and POIs alike, though for POIs specifically the name is already compacted once, at creation time (see [POIs](#pois)), rather than re-compacted here on every cursor move; a freeform name with no recognized type or ordinal word just passes through unchanged either way.
 
-* If there is exactly one current object, the message display shows its compacted stem and type together, e.g. "9th St" or "Sacramento St."
-* If there are multiple current objects, only the compacted stem of each is shown (no type), joined by the word "and" — e.g. two current objects "Main Street" and "Spruce Street" show as "Main and Spruce," not "Main St & Spruce St." Dropping the type keeps multi-name messages from growing unwieldy when several features are packed under the cursor at once. (Was joined by a literal ampersand until 2026-07-14; switched to the word "and" once the braille translator made the message display's actual on-device rendering worth being deliberate about.)
+* If there is exactly one current object, the message display shows its compacted stem and type together, e.g. "9th St." or "Sacramento St."
+* If there are multiple current objects, only the compacted stem of each is shown (no type), sorted alphabetically and joined by the word "and" — e.g. two current objects "Main Street" and "Spruce Street" always show as "Main and Spruce," never "Spruce and Main," regardless of which one the hit-test scan happens to reach first. This matters in practice: without the sort, the exact same pair of objects could re-announce itself with the names in the opposite order a pixel or two later as the cursor sweeps through an intersection, reading as two different reports for what's actually one unchanged situation. Dropping the type also keeps multi-name messages from growing unwieldy when several features are packed under the cursor at once. (Was joined by a literal ampersand, unsorted, until 2026-07-14; switched to the sorted word "and" once the braille translator made the message display's actual on-device rendering worth being deliberate about.)
 
 We will refine this behavior as we experiment with the UI.
 
@@ -191,6 +191,8 @@ The location edit field at the top of the main window is used to begin the DotTM
 
 Additional POIs can be added to a map by entering additional locations. Each new POI gets a triangle marker (currently a 3x3 square, like every other POI marker — see the note under [SVG Display Requirements](#svg-display-requirements)).
 
+POI names are run through [feature name compacting](#feature-name-compacting) once, at creation time — not left raw and compacted later at each display site. This applies to every way a POI can be created: additional POIs added via search, Drop Pin custom POIs, and the anchor POI itself. The compacted name is what's stored and reused everywhere the POI is later shown or spoken (the POI list box, cursor hit-test messages, the initial "found it" announcement).
+
 If a subsequent POI location is more than [threshold distance] away from the anchor POI, we get a true modal dialog that says "The new location is [distance] away from [anchor POI]. That's too far away for a single map." Buttons are "Show [new POI]" and "Cancel." If they select the new location, the old map is discarded and the new POI becomes the anchor with a new map generated around it.
 
 If a subsequent POI is less than [threshold distance] away, the new POI is added to the current map and the map pans to center that new POI. Panning behavior automatically happens, announcing the distance and direction from the anchor POI. Multiple additional POIs can be added to a single map.
@@ -244,7 +246,7 @@ A general-purpose utility, not specific to braille — it also feeds the planned
 
 Takes a street name, returns `{ stem, type }`:
 
-1. **Type suffix** — if the name's trailing word matches a known street-type word (Street, Avenue, Boulevard, Drive, Road, Lane, Court, Circle, Place, Terrace, Way, Highway, and similar), `type` becomes that word's standard abbreviation (St, Ave, Blvd, Dr, Rd, Ln, Ct, Cir, Pl, Ter, Way, Hwy, ...) and `stem` becomes the name with that trailing word removed. If nothing matches, `type` is empty and `stem` is the full name.
+1. **Type suffix** — if the name's trailing word matches a known street-type word (Street, Avenue, Boulevard, Drive, Road, Lane, Court, Circle, Place, Terrace, Way, Highway, and similar), `type` becomes that word's standard abbreviation (St., Ave, Blvd, Dr, Rd, Ln, Ct, Cir, Pl, Ter, Way, Hwy, ...) and `stem` becomes the name with that trailing word removed. If nothing matches, `type` is empty and `stem` is the full name.
 2. **Ordinal numbers** — independently of the type-suffix step, any ordinal number word found within `stem` (First through at least the 90s, including compounds like "Twenty-First") is converted to its digit+suffix form (Ninth -> 9th, Twenty-First -> 21st). If none is found, `stem` is left as-is.
 
 Both steps degrade gracefully: a name with neither a recognized type suffix nor an ordinal word passes through completely unchanged (`stem` = the full name, `type` = empty) — nothing regresses for names this can't help with.
@@ -361,7 +363,7 @@ Streets are grouped by the combination of **(name, highway class, tier)** — no
 
 ### POI metadata
 
-Each visible POI is a marker element carrying `data-name` — its name, unmodified. POIs don't get compacted stem/type/label metadata — they have no highway class or type suffix concept the way a street does.
+Each visible POI is a marker element carrying `data-name` — its name as stored, which is already compacted (see [feature name compacting](#feature-name-compacting)) as of creation time, not the raw geocoded/OSM name. POIs don't get separate compacted stem/type/label metadata beyond that one stored name — they have no highway class or type suffix concept the way a street does.
 
 ### File naming
 
