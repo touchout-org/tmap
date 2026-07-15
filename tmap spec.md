@@ -52,8 +52,9 @@ Top to bottom, left to right:
      * "Edit map..."
      * "Braille Labels..."
      * "Download SVG" — see [Download to Local SVG](#download-to-local-svg)
+     * "Settings..." — see [Settings](#settings). Introduced as its own button, separate from account management, since Settings is now partly built while accounts/auth (Phase 5) is not; "Account..." below is scoped to sign-in/cloud-save concerns only, not general app settings.
      * "My Archives..."
-     * "Account and settings..."
+     * "Account..."
 * To the right of the map (and below the scale combo box): a group called "Move Map," arranged in a plus sign, with North, South, East, and West buttons.
 
 ### Command / hotkey mapping
@@ -289,17 +290,29 @@ When any of the left, right, top, or bottom labels are turned off, the viewbox e
 
 ### Braille translator
 
-We will need a braille translator. We don't need any formatting functions. We will start with 8-dot computer braille and add uncontracted and contracted UEB. This will be used for the message display.
+Implemented as `braille-ueb.js`, a standalone module used only by the message display — street labels always render as 8-dot computer braille via NABCC regardless of this setting (see [Rendering differs between the on-screen SVG and the tactile raster](#label-placement) above), since they're a separate rendering pipeline with its own uniqueness/collision requirements that has nothing to do with literary braille codes.
+
+**Data source:** [liblouis](https://github.com/liblouis/liblouis) (LGPL 2.1+), the most widely used open-source braille translator. Rather than vendoring liblouis itself or reimplementing its general-purpose translation engine, the specific data DotTMAP needs was hand-extracted from three of its table files:
+
+* `tables/latinLetterDef6Dots.uti` — the 26 lowercase letter dot patterns.
+* `tables/en-ueb-chardefs.uti` — digit shapes (the `litdigit` opcode — the classic a-through-j-shaped numeric forms used after the number sign, not the differently-shaped `digit` opcode, which liblouis uses for an unrelated purpose), the number sign, the capital sign, and the handful of punctuation marks this app's own message-display text actually uses (space, `. , ' - … : & = ! ?`).
+* `tables/en-ueb-g2.ctb` — Grade 2 contractions, filtered down to the subset expressible as a pure word-position rule (liblouis opcodes `always`/`word`/`begword`/`endword`/`midword`/`midendword`/`sufword`) rather than its context-dependent `match`-opcode rules (regex-like lookaround/quote/emphasis handling this app's plain message text never needs) — plus the 23 "alphabetic wordsigns" (as, but, can, do, every, from, go, have, it, just, knowledge, like, more, not, people, quite, rather, so, that, us, very, will, you), which liblouis only exposes for forward translation via a `match` rule (to additionally handle optional `'d`/`'ll`/`'re`/`'s`/`'t`/`'ve` suffixes this app doesn't need) but are far too common/valuable to drop, so they're pulled back in as their own small category via their simpler back-translation-only counterparts. liblouis's `nofor`-prefixed lines (back-translation only) are excluded entirely, since this app only ever translates forward (print to braille).
+
+**Grade 1 (uncontracted)** handles capitalization, numbers, and punctuation, with no contractions at all: each letter maps directly to its dot pattern; a capital letter is preceded by the capital sign (dot 6), one per capital letter — no capsword-phrase compaction, since this app's message text is never long stretches of capitals; a run of digits is preceded by the number sign (dots 3-4-5-6) and each digit uses its literary (`litdigit`) shape; unmapped characters fall back to a blank cell rather than erroring.
+
+**Grade 2 (contracted)** builds on Grade 1: text is split into words (letter runs), numbers, and other characters (space/punctuation), each handled independently. Within a word, contractions are resolved **longest-match-first**: at each position, the longest candidate substring whose word-position rule is satisfied (whole word, word-initial, word-final, mid-word only, etc.) wins; if nothing matches at a position, that one character falls back to its plain Grade 1 letter. A small number of contraction entries carry no dot pattern at all (liblouis's `=` value) — these are specific-word overrides that force plain spelling to suppress a contraction that would otherwise misfire (e.g. certain "co-" prefixed words where the generic "co" sign is wrong for that particular word); the translator honors these by spelling just the overridden substring in plain letters, same as any other unmatched position. Capitalization is applied once per word (a single capital sign before the whole translated word, if the word's first letter was capitalized) rather than per matched contraction — correct and sufficient for this app's actual content (plain title-case or lowercase words), though not a full implementation of UEB's per-letter capitalization-within-a-contraction rules for arbitrary mixed-case text.
 
 ## Settings
 
 Default values in [brackets]. Before settings are implemented, we set default values but use variables to ensure settings-ready architecture.
 
+The Settings dialog (opened via the "Settings..." button — see [Screen Layout](#screen-layout)) is the first of these to get a real control, and establishes the pattern the rest will follow when built: unlike Edit Map and Braille Labels (both live-apply, no Save/Cancel step), Settings **stages** its changes — the dialog's controls reflect the currently-committed values every time it opens, but a change only takes effect when OK is clicked; Cancel closes the dialog and discards whatever was changed, leaving the previous values in place.
+
 * Metric / [Imperial]
 * Map scale options: 1 in = 100, 200, 300, [400], 500, 1000, 1500, 2000, 5000
 * Scale type: [Traditional] / Display Area — Display Area's values (e.g., "300 feet by 200 feet") are calculated from this same set of Traditional Scale presets, rounded as needed for simplicity, rather than authored as a separate preset list
 * Pan amount: [1/4], 1/2, 3/4, 1 — in units of display height/width. Horizontal and vertical pan amounts are independent settings, and the actual map distance covered by a pan varies with the current scale.
-* Braille code: [8-dot computer], US uncontracted, contracted UEB
+* **Braille Translation: 8-dot computer braille, English Uncontracted, [English Contracted]** — implemented. Only affects the message display; see [Braille translator](#braille-translator) above for what each option actually does and where the data comes from.
 * Braille labels (4 checkboxes): left, right, top, bottom — [none checked]. These are the same 4 checkboxes exposed by the "Braille Labels..." button in Screen Layout, not a separate control — deliberately kept off the main page and out of the general Settings dialog, in their own dedicated dialog.
 * POI distance threshold: [1 mile], 2 miles, 3 miles
 
@@ -419,7 +432,7 @@ Priority tiers as set by the user on 2026-07-08:
 | Settings dialog (units, pan amount, POI threshold, scale type, Display Area preset values) | Settings | Built against the default-value variables the Settings section already calls for; *persisting* settings across sessions is a P2 item, see below. An earlier, minimal experimental tuning-fields surface for the (now-retired) automated decluttering/collapse parameters existed briefly before this dialog — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Edit Map dialog~~ | Map editing | Done, in a different shape than originally planned here — see [Editing the Map](#editing-the-map) |
 | ~~Download to a local `.svg` file~~ | Downloading | Done — distinct from full My Archives (P2), no account needed; see [Download to Local SVG](#download-to-local-svg) |
-| Braille translator (multi-code: US uncontracted, contracted UEB) | Braille translation | Resolved: baseline 8-dot computer output ships early via the reused DotSVG module, no translator needed; building the full multi-code translator is phased into Phase 5 as an external dependency |
+| ~~Braille translator (multi-code: US uncontracted, contracted UEB)~~ | Braille translation | Done — see [Braille translator](#braille-translator); built ahead of Phase 5 (needed as a prerequisite for the rest of Settings, not gated on accounts/auth) |
 | ~~Large-scale street decluttering algorithm~~ | Large-scale decluttering | Built (semantic tiers + measured grid density), then retired in favor of the manual Map Complexity filter — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | ~~Divided-road carriageway collapse~~ | Large-scale decluttering | Built, then retired along with the rest of the automated pipeline — see [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 
@@ -474,7 +487,7 @@ Priority tiers as set by the user on 2026-07-08:
 21. Google auth integration via Firebase Authentication (see [Authentication](#authentication)).
 22. My Archives (save/load/rename/delete) — distinct from Download, which ships in Phase 3 as a P1 feature needing no account. Format-versioning risk is resolved as a policy (migrate legacy data or avoid breaking format changes), not a system to build — see [Open Questions & Critical Gaps](#open-questions--critical-gaps).
 23. Settings persistence across sessions. Display Area scale presets are already fully defined (calculated from the Traditional Scale list, see [Settings](#settings)) — no longer an open item here.
-24. Braille translator library selection/build (multi-code: formalizing 8-dot computer plus adding US uncontracted and contracted UEB) — moved from Phase 0. Baseline 8-dot computer output for the message display doesn't need this; it's only needed once the Braille code setting has more than one option.
+24. ~~Braille translator library selection/build (multi-code: formalizing 8-dot computer plus adding US uncontracted and contracted UEB)~~ — done, ahead of the rest of Phase 5 (see [Braille translator](#braille-translator)); built now specifically because it's a prerequisite for the Settings dialog's Braille Translation control, which doesn't depend on accounts/auth.
 
 ## Appendix: Retired Automated Data Cleaning Pipeline
 

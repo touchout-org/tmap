@@ -4,6 +4,7 @@ import {
   DisplayMode,
   DataCodes
 } from './web-sdk-3.0.0/DotPadSDK-3.0.0.js';
+import { translateGrade1, translateGrade2 } from './braille-ueb.js';
 
 // Data sources — see tmap spec.md § Data sources
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
@@ -97,6 +98,16 @@ async function loadLocalTestData(query) {
 // constraint is about the fetch payload itself, independent of whatever
 // processWays does (or doesn't) do with it afterward.
 const POI_DISTANCE_THRESHOLD_MILES = 0.5;
+
+// § Settings — the first of this block's settings to actually get a real
+// UI (see the Settings dialog wiring further down): which braille code
+// the message display sends to the physical Dot Pad in. 'computer8' is
+// the existing 8-dot computer braille (NABCC); 'ueb1'/'ueb2' route
+// through braille-ueb.js instead (see tmap spec.md § Braille translator).
+// Defaults to Grade 2 (contracted) per spec. Only affects the message
+// display -- street labels always render as 8-dot computer braille via
+// NABCC regardless of this setting (see labelCharacterDots).
+let brailleCodeSetting = 'ueb2';
 
 // Matches DotSVG's 600x400 canvas (10:1 over the 60x40 dot grid) — see tmap spec.md
 // § SVG Display Requirements (3x2 canvas ratio).
@@ -219,6 +230,11 @@ const editMapHiddenFeaturesList = document.getElementById('edit-map-hidden-featu
 const editMapComplexityList = document.getElementById('edit-map-complexity-list');
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
 const btnDownloadSvg = document.getElementById('btn-download-svg');
+const btnSettings = document.getElementById('btn-settings');
+const settingsDialog = document.getElementById('settings-dialog');
+const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
+const btnSettingsOk = document.getElementById('btn-settings-ok');
+const btnSettingsCancel = document.getElementById('btn-settings-cancel');
 
 let hasAnchor = false;
 
@@ -462,6 +478,20 @@ btnLabelsClose.addEventListener('click', () => labelsDialog.close());
 for (const zone in labelCheckboxes) {
   labelCheckboxes[zone].addEventListener('change', () => setLabelZone(zone, labelCheckboxes[zone].checked));
 }
+
+// § Settings — unlike Edit Map/Braille Labels (both live-apply, no Save/
+// Cancel), Settings stages its change: the combo box reflects the
+// currently-committed brailleCodeSetting on every open, but only OK
+// actually commits a new selection; Cancel closes without touching it.
+btnSettings.addEventListener('click', () => {
+  settingsBrailleCodeSelect.value = brailleCodeSetting;
+  settingsDialog.showModal();
+});
+btnSettingsOk.addEventListener('click', () => {
+  brailleCodeSetting = settingsBrailleCodeSelect.value;
+  settingsDialog.close();
+});
+btnSettingsCancel.addEventListener('click', () => settingsDialog.close());
 
 // § Braille labels — shared toggle used by both the dialog checkboxes and
 // the i/j/k/l hotkeys. Reports the new state in the message field per
@@ -2724,13 +2754,32 @@ function textToMessageHex(text, numCells) {
   return hex;
 }
 
+// § Settings / § Braille translator — same padding/truncation shape as
+// textToMessageHex, but from an array of already-computed 6-dot cell
+// bitmasks (braille-ueb.js's translateGrade1/translateGrade2 output)
+// rather than looking each byte up from raw text via NABCC.
+function cellsToMessageHex(cells, numCells) {
+  let hex = '';
+  for (let i = 0; i < numCells; i++) {
+    const mask = i < cells.length ? cells[i] : 0;
+    hex += mask.toString(16).padStart(2, '0').toUpperCase();
+  }
+  return hex;
+}
+
 function sendTextToDevice(text, device) {
   // Confirmed via on-screen device-info diagnostic that this hardware
   // reports numberBrailleCellColumns=20, matching the spec, so back to
   // trusting the device's own reported value rather than hardcoding it.
   const numCells = device.numberBrailleCellColumns;
   const zeros = '00'.repeat(numCells);
-  const hex = textToMessageHex(text, numCells);
+  // § Settings — brailleCodeSetting picks which braille code the message
+  // display uses; only this call site is affected. Street labels always
+  // use textToMessageHex's NABCC byte-per-cell approach further up the
+  // render pipeline (see labelCharacterDots), never this branch.
+  const hex = brailleCodeSetting === 'ueb1' ? cellsToMessageHex(translateGrade1(text), numCells)
+    : brailleCodeSetting === 'ueb2' ? cellsToMessageHex(translateGrade2(text), numCells)
+    : textToMessageHex(text, numCells);
   sdk.displayTextData(zeros, device, DisplayMode.TextMode);
   sdk.displayTextData(hex, device, DisplayMode.TextMode);
 }

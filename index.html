@@ -68,6 +68,7 @@
     <button id="btn-edit-map" type="button" disabled>Edit map...</button>
     <button id="btn-labels" type="button">Braille Labels...</button>
     <button id="btn-download-svg" type="button" disabled>Download SVG</button>
+    <button id="btn-settings" type="button">Settings...</button>
   </div>
 
   <dialog id="edit-map-dialog" aria-labelledby="edit-map-dialog-heading">
@@ -111,6 +112,20 @@
       <label for="label-right">Right</label>
     </div>
     <button id="btn-labels-close" type="button">Close</button>
+  </dialog>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">
+    <h3 id="settings-dialog-heading">Settings</h3>
+    <div>
+      <label for="settings-braille-code">Braille Translation</label>
+      <select id="settings-braille-code">
+        <option value="computer8">8-dot computer braille</option>
+        <option value="ueb1">English Uncontracted</option>
+        <option value="ueb2" selected>English Contracted</option>
+      </select>
+    </div>
+    <button id="btn-settings-ok" type="button">OK</button>
+    <button id="btn-settings-cancel" type="button">Cancel</button>
   </dialog>
 
   <footer>
