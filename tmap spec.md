@@ -284,6 +284,8 @@ Since all labels are exactly 3 characters, the left and right label columns need
 
 When any of the left, right, top, or bottom labels are turned off, the viewbox expands to use that space for the map.
 
+**Rendering differs between the on-screen SVG and the tactile raster sent to the Dot Pad.** The physical device always receives real 8-dot computer braille, per the label-creation/placement design above. The on-screen SVG instead shows each label as plain print text, positioned within the same footprint the braille block would occupy — so a sighted person looking at the screen and a blind person feeling the Dot Pad can discuss the same map using the same labels, each in the form that's actually readable to them.
+
 ### Braille translator
 
 We will need a braille translator. We don't need any formatting functions. We will start with 8-dot computer braille and add uncontracted and contracted UEB. This will be used for the message display.

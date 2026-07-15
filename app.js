@@ -1983,7 +1983,12 @@ const LABEL_CHAR_HEIGHT_DOTS = 3;
 const LABEL_CHAR_KERNING_DOTS = 1;
 const LABEL_MAP_PADDING_DOTS = 2;
 
-function labelDotPositions(placement, gridBounds) {
+// § Braille labels — the top-left anchor a label's 3-character block is
+// laid out from, shared by the braille-dot geometry below (still used by
+// the tactile raster) and the on-screen print-text rendering (see
+// drawLabelContent), so the two can never drift out of sync on where a
+// label actually sits.
+function labelBaseXY(placement, gridBounds) {
   const charSpan = LABEL_CHAR_WIDTH_DOTS * 3 + LABEL_CHAR_KERNING_DOTS * 2; // 8
   const horizontal = placement.edge === 'top' || placement.edge === 'bottom';
 
@@ -2001,7 +2006,11 @@ function labelDotPositions(placement, gridBounds) {
       : gridBounds.offsetX + gridBounds.width + LABEL_MAP_PADDING_DOTS;
     baseY = Math.round(centerY - LABEL_CHAR_HEIGHT_DOTS / 2);
   }
+  return { baseX, baseY, charSpan };
+}
 
+function labelDotPositions(placement, gridBounds) {
+  const { baseX, baseY } = labelBaseXY(placement, gridBounds);
   const dots = [];
   placement.label.split('').forEach((ch, i) => {
     const charX = baseX + i * (LABEL_CHAR_WIDTH_DOTS + LABEL_CHAR_KERNING_DOTS);
@@ -2012,25 +2021,34 @@ function labelDotPositions(placement, gridBounds) {
   return dots;
 }
 
-// § Braille labels — draws every placed label's actual braille dot
-// pattern into its zone, as small circles at each "on" dot's absolute
-// grid position (converted to SVG units the same way svgMapRect/
-// mapGridBounds do elsewhere). Deliberately mirrors what
-// drawLabelDotsToPixels draws into the tactile raster -- the on-screen
-// SVG and the physical device should always show the same pattern, same
-// as every other element on this map.
+// § Braille labels — the on-screen SVG shows each placed label as plain
+// print text rather than its braille dot pattern -- the tactile raster
+// (drawLabelDotsToPixels below) is untouched and still draws real
+// braille, since these are two genuinely separate rendering pipelines
+// feeding two different audiences (sighted and blind users looking at
+// the same map together). Positioned at the same top-left anchor
+// labelDotPositions uses for the equivalent braille block (labelBaseXY),
+// horizontally centered within that block's own footprint -- print text
+// doesn't need to match the dot pattern's per-character spacing. Font
+// size is derived from the zone's fixed dot-row height
+// (LABEL_CHAR_HEIGHT_DOTS), not hardcoded, so it stays correct if that
+// constant ever changes.
 function drawLabelContent(svgNs, placements, gridBounds) {
   const group = document.createElementNS(svgNs, 'g');
+  const rowHeightUnits = LABEL_CHAR_HEIGHT_DOTS * SVG_UNITS_PER_DOT;
+  const fontSizeUnits = rowHeightUnits * 0.85;
   for (const edge of LABEL_EDGE_ORDER) {
     for (const placement of placements[edge]) {
-      for (const dot of labelDotPositions(placement, gridBounds)) {
-        const circle = document.createElementNS(svgNs, 'circle');
-        circle.setAttribute('cx', (dot.x * SVG_UNITS_PER_DOT + SVG_UNITS_PER_DOT / 2).toFixed(1));
-        circle.setAttribute('cy', (dot.y * SVG_UNITS_PER_DOT + SVG_UNITS_PER_DOT / 2).toFixed(1));
-        circle.setAttribute('r', (SVG_UNITS_PER_DOT * 0.35).toFixed(1));
-        circle.setAttribute('class', 'label-dot');
-        group.appendChild(circle);
-      }
+      const { baseX, baseY, charSpan } = labelBaseXY(placement, gridBounds);
+      const text = document.createElementNS(svgNs, 'text');
+      const centerXUnits = (baseX + charSpan / 2) * SVG_UNITS_PER_DOT;
+      const baselineYUnits = baseY * SVG_UNITS_PER_DOT + rowHeightUnits - (rowHeightUnits - fontSizeUnits) / 2;
+      text.setAttribute('x', centerXUnits.toFixed(1));
+      text.setAttribute('y', baselineYUnits.toFixed(1));
+      text.setAttribute('font-size', fontSizeUnits.toFixed(1));
+      text.setAttribute('class', 'label-text');
+      text.textContent = placement.label;
+      group.appendChild(text);
     }
   }
   mapSvg.appendChild(group);

@@ -138,11 +138,17 @@ body {
   stroke-dasharray: 4 2;
 }
 
-/* § Braille labels — one filled circle per "on" braille dot, same fill as
-   the POI markers so both read as solid/tactile against the label-zone's
-   lighter background. */
-#map .label-dot {
+/* § Braille labels — the on-screen SVG shows each label as plain print
+   text (the tactile raster sent to the device still gets real braille
+   dots -- see drawLabelDotsToPixels/drawLabelContent in app.js), so
+   sighted and blind users looking at the same map can read/discuss the
+   same labels. Same fill as the POI markers for a consistent solid look
+   against the label-zone's lighter background; monospace keeps character
+   width predictable against the layout math in drawLabelContent. */
+#map .label-text {
   fill: #1a1a1a;
+  font-family: ui-monospace, "Courier New", monospace;
+  text-anchor: middle;
 }
 
 #controls-row {
