@@ -151,11 +151,69 @@ body {
   text-anchor: middle;
 }
 
-#controls-row {
+#app-menu-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+#main-menu-container {
+  position: relative;
+}
+
+#main-menu-button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+#main-menu-button::after {
+  content: "\25BE";
+  font-size: 0.8em;
+}
+
+#main-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1;
+  margin: 0.25rem 0 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid #999;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  min-width: 12rem;
+}
+
+#main-menu li {
+  margin: 0;
+}
+
+#main-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: none;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+#main-menu button:hover,
+#main-menu button:focus {
+  background: Highlight;
+  color: HighlightText;
+  outline: none;
+}
+
+#main-menu button[aria-disabled="true"] {
+  color: GrayText;
+  cursor: not-allowed;
 }
 
 #settings-dialog,

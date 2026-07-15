@@ -53,19 +53,25 @@ The default title is "DotTMAP — Tactile Street Maps for the Dot Pad." When a m
 
 Top to bottom, left to right:
 
+* At the very top of the page, before the H1: "Connect Dot Pad" button, then the **Main Menu** button. This pair replaced an earlier bottom-of-page "Controls" row (H3 + a flat row of buttons) as of 2026-07-15, prototyped first on the OSM Data Mine experiment site's own menu-button conversion — see [Main Menu](#main-menu) below for the interaction pattern and why it moved.
 * H1: "Welcome to DotTMAP"
 * Edit field: "Enter an address or location to get started:" [edit field], Search button. Once the anchor POI has been set, the label changes to "Enter another nearby address or location (optional)" — reflecting that the field is now for adding [additional POIs](#additional-pois) rather than starting the map.
 * Below the search: H2 with the found address (anchor POI).
 * Below the H2: the visual representation of the map.
 * Immediately below the map: a print version of the message display (live ARIA region).
-* Below the message box, set off by a horizontal rule and an H3 "Controls," left to right:
-     * "Connect Dot Pad" / "Disconnect Dot Pad" (from the Dot Pad SDK) — only one is ever visible at a time, based on current connection state: "Connect Dot Pad" when no device is connected, "Disconnect Dot Pad" once one is. The other is hidden entirely rather than shown disabled. Connecting or disconnecting reports status through the message field, per [Message display architecture](#message-display-architecture)
-     * "Edit map..."
-     * "Download SVG" — see [Download to Local SVG](#download-to-local-svg)
-     * "Settings..." — see [Settings](#settings). Introduced as its own button, separate from account management, since Settings is now partly built while accounts/auth (Phase 5) is not; "Account..." below is scoped to sign-in/cloud-save concerns only, not general app settings. The Braille Labels checkboxes and the scale control both live inside this dialog now (see [Settings](#settings)) rather than as their own main-window controls — there is no longer a standalone "Braille Labels..." button or a scale combo box next to the H2.
-     * "My Archives..."
-     * "Account..."
 * To the right of the map: a group called "Move Map," arranged in a plus sign, with North, South, East, and West buttons.
+
+### Main Menu
+
+A WAI-ARIA "Actions Menu Button" opened by the "Main Menu" button at the top of the page (see [Screen Layout](#screen-layout)). Selecting an item takes effect immediately and closes the menu — there's no persistent "currently selected" indicator, since every item is an action, not a standing option. Contains, top to bottom:
+
+* **"Customize Map"** — opens the dialog formerly labeled "Edit map..."; unchanged in every other respect, see [Editing the Map](#editing-the-map). Disabled (present but not activatable, `aria-disabled`, not native `disabled` — so it stays keyboard-navigable) until an anchor POI exists, same condition as before the menu conversion.
+* **"Download SVG"** — see [Download to Local SVG](#download-to-local-svg). Same disabled-until-anchor condition as Customize Map.
+* **"Display Preferences"** — opens the dialog formerly labeled "Settings..."; unchanged in every other respect, see [Settings](#settings). Always enabled.
+* *(Planned, not yet built: a "Login" item for the eventual account/sign-in flow — see [Authentication](#authentication) — and, per the existing P2 plan, a "My Archives" item for cloud save/load — see [Saving and exporting](#saving-and-exporting). Neither is scheduled ahead of its existing Phase 5 placement; noted here only so the Main Menu's eventual full shape is clear.)*
+* **"Disconnect Dot Pad"** — only present at all while a Dot Pad is connected; entirely absent (not just disabled) while disconnected. This is the counterpart to the main-screen "Connect Dot Pad" button (see below) — the two are never both present, and Disconnect never appears on the main screen itself.
+
+"Connect Dot Pad" (from the Dot Pad SDK) lives on the main screen, not in the Main Menu, and receives keyboard focus automatically when the page first loads. It's shown only while disconnected; once connected, it's removed from the main screen entirely and "Disconnect Dot Pad" appears at the bottom of the Main Menu instead, per above. Connecting or disconnecting reports status through the message field, per [Message display architecture](#message-display-architecture).
 
 ### Command / hotkey mapping
 
@@ -209,7 +215,7 @@ A custom POI is added through the same path as any other additional POI — it s
 
 ## Editing the Map
 
-Clicking "Edit map..." opens a dialog with four expandable, collapsible groups (native disclosure widgets, each with an `<h4>`-wrapped label so the group names stay heading-navigable while expanded): **POIs**, **Visible Streets**, **Hidden Features**, and **Map Complexity**. There is no Save/Cancel step — every action in this dialog takes effect immediately and is reflected on the map, the tactile raster, and the message field right away.
+Clicking "Customize Map" (in the [Main Menu](#main-menu); formerly its own "Edit map..." button) opens a dialog with four expandable, collapsible groups (native disclosure widgets, each with an `<h4>`-wrapped label so the group names stay heading-navigable while expanded): **POIs**, **Visible Streets**, **Hidden Features**, and **Map Complexity**. There is no Save/Cancel step — every action in this dialog takes effect immediately and is reflected on the map, the tactile raster, and the message field right away.
 
 **POIs** lists every POI currently visible on the map, sorted in the same order as the POI list box (anchor first, then additional POIs in the order they were added). Each item is a plain clickable button, not a checkbox — clicking a POI removes it from the map (and the POI list box) and moves it into Hidden Features. The message field announces "[POI name] removed."
 
@@ -320,7 +326,7 @@ Implemented as `braille-ueb.js`, a standalone module used only by the message di
 
 Default values in [brackets]. Before settings are implemented, we set default values but use variables to ensure settings-ready architecture.
 
-The Settings dialog (opened via the "Settings..." button — see [Screen Layout](#screen-layout)) is the first of these to get a real control, and establishes the pattern the rest will follow when built: like Edit Map (fully live-apply, no Save/Cancel step), **every control in this dialog applies immediately on change** — there is no staging, no commit step, and nothing to discard. Opening the dialog only syncs each control's displayed value/checked state to match current app state. The dialog has a single **Done** button that just closes it; there is no OK or Cancel, since a change already took effect the moment it was made.
+The Settings dialog (opened via "Display Preferences" in the [Main Menu](#main-menu), formerly its own "Settings..." button) is the first of these to get a real control, and establishes the pattern the rest will follow when built: like Customize Map (fully live-apply, no Save/Cancel step), **every control in this dialog applies immediately on change** — there is no staging, no commit step, and nothing to discard. Opening the dialog only syncs each control's displayed value/checked state to match current app state. The dialog has a single **Done** button that just closes it; there is no OK or Cancel, since a change already took effect the moment it was made.
 
 (Earlier in development, Braille Translation was staged behind OK/Cancel while the other controls were live-apply — a deliberate divergence at the time. That distinction was removed once Braille Translation itself became live-apply, since a staged/live-apply split within one dialog was more confusing than useful. Treat live-apply as the model for any future Settings control, not staged.)
 
@@ -341,7 +347,7 @@ The dialog is organized into sub-sections, each under its own heading:
 
 ## Download to Local SVG
 
-The "Download SVG" button (see [Screen Layout](#screen-layout)) saves the current map as a local `.svg` file, immediately, no account and no prior save required — distinct from "My Archives" (see [Saving and exporting](#saving-and-exporting)), which is a full cloud-backed save/load system gated behind sign-in.
+"Download SVG" (in the [Main Menu](#main-menu)) saves the current map as a local `.svg` file, immediately, no account and no prior save required — distinct from "My Archives" (see [Saving and exporting](#saving-and-exporting)), which is a full cloud-backed save/load system gated behind sign-in.
 
 ### Scope
 
@@ -434,7 +440,7 @@ Priority tiers as set by the user on 2026-07-08:
 | ~~Same-name street de-duplication filtering~~ | Data cleaning | Built, then retired along with the rest of the automated pipeline in favor of manual filtering — see [Map filtering](#map-filtering) and [Appendix: Retired Automated Data Cleaning Pipeline](#appendix-retired-automated-data-cleaning-pipeline) |
 | SVG map rendering (on screen) | Presentation | Must work standalone with no Dot Pad connected, per Hardware requirement |
 | Chrome browser check + warning | Presentation | Gates BLE connectivity (Web Bluetooth is Chromium-only); non-blocking |
-| Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Sit in the Controls row alongside Edit map/Download SVG/My Archives/Settings (Braille Labels is no longer its own Controls-row button — its checkboxes moved into the Settings dialog, see [Settings](#settings)) |
+| Connect/Disconnect Dot Pad buttons (SDK-provided) | Presentation | Connect Dot Pad sits on the main screen; Disconnect Dot Pad sits at the bottom of the Main Menu instead of beside it — see [Main Menu](#main-menu). Superseded the original flat "Controls" row entirely, 2026-07-15 |
 | BLE connection + tactile rendering on Dot Pad | Presentation | |
 | Cursor movement + hit testing + message display | Interaction — pointing | |
 | Pan controls (on-screen buttons + hotkeys) | Interaction — panning | |

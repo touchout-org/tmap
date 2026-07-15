@@ -221,7 +221,8 @@ const anchorHeading = document.getElementById('anchor-heading');
 const mapSvg = document.getElementById('map');
 const messageDisplay = document.getElementById('message-display');
 const btnConnect = document.getElementById('btn-connect');
-const btnDisconnect = document.getElementById('btn-disconnect');
+const mainMenuButton = document.getElementById('main-menu-button');
+const mainMenu = document.getElementById('main-menu');
 const scaleSelect = document.getElementById('scale-select');
 const btnPanNorth = document.getElementById('btn-pan-north');
 const btnPanSouth = document.getElementById('btn-pan-south');
@@ -244,15 +245,16 @@ const customPoiDialog = document.getElementById('custom-poi-dialog');
 const customPoiForm = document.getElementById('custom-poi-form');
 const customPoiNameInput = document.getElementById('custom-poi-name');
 const btnCustomPoiCancel = document.getElementById('btn-custom-poi-cancel');
-const btnEditMap = document.getElementById('btn-edit-map');
+const btnEditMap = document.getElementById('menu-customize-map');
 const editMapDialog = document.getElementById('edit-map-dialog');
 const editMapPoisList = document.getElementById('edit-map-pois-list');
 const editMapVisibleStreetsList = document.getElementById('edit-map-visible-streets-list');
 const editMapHiddenFeaturesList = document.getElementById('edit-map-hidden-features-list');
 const editMapComplexityList = document.getElementById('edit-map-complexity-list');
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
-const btnDownloadSvg = document.getElementById('btn-download-svg');
-const btnSettings = document.getElementById('btn-settings');
+const btnDownloadSvg = document.getElementById('menu-download-svg');
+const btnSettings = document.getElementById('menu-display-preferences');
+const btnDisconnect = document.getElementById('menu-disconnect');
 const settingsDialog = document.getElementById('settings-dialog');
 const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
 const settingsUnitsSelect = document.getElementById('settings-units');
@@ -269,8 +271,9 @@ let additionalPois = []; // { name, lat, lon }
 // so "Show new location" knows what to do (see promptTooFarPoi).
 let pendingFarPoi = null;
 
-// § Screen Layout — Dot Pad connection state. Only one of btn-connect /
-// btn-disconnect is ever visible at a time (see setConnectedState/setDisconnectedState).
+// § Screen Layout — Dot Pad connection state. Connect Dot Pad (main screen)
+// and Disconnect Dot Pad (bottom of the Main Menu) are never both present
+// at once (see setConnectedState/setDisconnectedState).
 const sdk = new DotPadSDK();
 const scanner = new DotPadScanner();
 let currentDevice = null;
@@ -626,11 +629,100 @@ for (const zone in labelCheckboxes) {
   labelCheckboxes[zone].addEventListener('change', () => setLabelZone(zone, labelCheckboxes[zone].checked));
 }
 
+// § Screen Layout — Main Menu, a WAI-ARIA "Actions Menu Button" (prototyped
+// on the OSM Data Mine experiment site before being brought in here):
+// Customize Map, Download SVG, and Display Preferences (formerly three
+// separate always-visible buttons) plus, only while a Dot Pad is connected,
+// Disconnect Dot Pad at the bottom. Selecting an item takes effect
+// immediately and closes the menu -- there's no persistent "current
+// selection" state to indicate, since every item is an action, not an
+// option. mainMenuItems() re-reads the DOM each time rather than caching a
+// list, since which items are hidden (Disconnect Dot Pad) changes at
+// runtime.
+function mainMenuItems() {
+  return Array.from(mainMenu.querySelectorAll('[role="menuitem"]')).filter((item) => !item.hidden);
+}
+
+function openMainMenu(focusIndex) {
+  mainMenu.hidden = false;
+  mainMenuButton.setAttribute('aria-expanded', 'true');
+  focusMainMenuItem(focusIndex);
+}
+
+function closeMainMenu({ focusButton = false } = {}) {
+  if (mainMenu.hidden) return;
+  mainMenu.hidden = true;
+  mainMenuButton.setAttribute('aria-expanded', 'false');
+  if (focusButton) mainMenuButton.focus();
+}
+
+// Roving tabindex: only the item DOM focus currently sits on is reachable
+// via Tab; arrow keys move both the tabindex and actual focus together.
+function focusMainMenuItem(index) {
+  const items = mainMenuItems();
+  items.forEach((item, i) => item.setAttribute('tabindex', i === index ? '0' : '-1'));
+  items[index].focus();
+}
+
+mainMenuButton.addEventListener('click', () => {
+  if (mainMenu.hidden) {
+    openMainMenu(0);
+  } else {
+    closeMainMenu();
+  }
+});
+
+mainMenuButton.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    openMainMenu(0);
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    openMainMenu(mainMenuItems().length - 1);
+  }
+});
+
+// Arrow/Home/End/Escape/Tab navigation is identical for every item
+// regardless of which action it performs, so it's wired once here for all
+// of them (including Disconnect Dot Pad while hidden -- harmless, since
+// mainMenuItems() only ever computes indices among currently-visible items).
+Array.from(mainMenu.querySelectorAll('[role="menuitem"]')).forEach((item) => {
+  item.addEventListener('keydown', (event) => {
+    const items = mainMenuItems();
+    const index = items.indexOf(item);
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusMainMenuItem((index + 1) % items.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusMainMenuItem((index - 1 + items.length) % items.length);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      focusMainMenuItem(0);
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      focusMainMenuItem(items.length - 1);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMainMenu({ focusButton: true });
+    } else if (event.key === 'Tab') {
+      closeMainMenu();
+    }
+  });
+});
+
+document.addEventListener('click', (event) => {
+  if (!mainMenu.hidden && !event.target.closest('#main-menu-container')) {
+    closeMainMenu();
+  }
+});
+
 // § Settings — every control in this dialog is live-apply now (a change
 // takes effect immediately, not gated behind a commit step): opening the
 // dialog only needs to sync each control's displayed value/checked state to
 // match current state, and the dialog's own button just dismisses it.
 btnSettings.addEventListener('click', () => {
+  closeMainMenu({ focusButton: true });
   settingsBrailleCodeSelect.value = brailleCodeSetting;
   settingsUnitsSelect.value = unitSystem;
   for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
@@ -1101,7 +1193,11 @@ function openEditMapDialog() {
   editMapDialog.showModal();
 }
 
-btnEditMap.addEventListener('click', openEditMapDialog);
+btnEditMap.addEventListener('click', () => {
+  if (btnEditMap.getAttribute('aria-disabled') === 'true') return;
+  closeMainMenu({ focusButton: true });
+  openEditMapDialog();
+});
 
 btnEditMapClose.addEventListener('click', () => editMapDialog.close());
 
@@ -1429,9 +1525,9 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   cursorSvg.hidden = false;
   scaleSelect.disabled = false;
   panButtons.forEach((btn) => { btn.disabled = false; });
-  btnEditMap.disabled = false;
+  btnEditMap.removeAttribute('aria-disabled');
   btnDropPin.disabled = false;
-  btnDownloadSvg.disabled = false;
+  btnDownloadSvg.removeAttribute('aria-disabled');
   refreshMap();
 
   setMessage(compactedName);
@@ -2683,7 +2779,11 @@ function downloadExportSvg() {
   URL.revokeObjectURL(url);
 }
 
-btnDownloadSvg.addEventListener('click', downloadExportSvg);
+btnDownloadSvg.addEventListener('click', () => {
+  if (btnDownloadSvg.getAttribute('aria-disabled') === 'true') return;
+  closeMainMenu({ focusButton: true });
+  downloadExportSvg();
+});
 
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
 // acceleration. Shared by both the arrow keys and the Dot Pad's dots 3/2/5/6.
@@ -2871,9 +2971,15 @@ function changeScale(delta) {
 // them, or e.g. arrowing through the POI dropdown also moves the map
 // cursor. Checking the focused element's tag name (rather than listing
 // specific IDs) covers every current and future form control uniformly.
+// role="menuitem" gets the same treatment for the same reason: the Main
+// Menu's own arrow/Home/End/Escape keys (see openMainMenu et al. above)
+// would otherwise fire alongside the map's arrow-key cursor movement while
+// a menu item has focus.
 const FORM_CONTROL_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 function isFormControlFocused() {
-  return FORM_CONTROL_TAGS.has(document.activeElement && document.activeElement.tagName);
+  const focused = document.activeElement;
+  if (!focused) return false;
+  return FORM_CONTROL_TAGS.has(focused.tagName) || focused.getAttribute('role') === 'menuitem';
 }
 
 document.addEventListener('keydown', (event) => {
@@ -3239,8 +3345,10 @@ function sendTestGridToDevice(device) {
   sendPixelsToDevice(device, pixels, numCols, numRows);
 }
 
-// § Screen Layout — only one of Connect/Disconnect is ever visible, never both
-// shown with one disabled.
+// § Screen Layout — Connect Dot Pad lives on the main screen and is only
+// shown while disconnected; Disconnect Dot Pad lives at the bottom of the
+// Main Menu and only exists there while connected (see main-menu.disconnect
+// item's hidden toggling below) -- the two are never both present at once.
 function setConnectedState(device) {
   currentDevice = device;
   btnConnect.hidden = true;
@@ -3288,6 +3396,7 @@ btnConnect.addEventListener('click', async () => {
 });
 
 btnDisconnect.addEventListener('click', () => {
+  closeMainMenu({ focusButton: true });
   if (currentDevice) sdk.disconnect(currentDevice);
 });
 

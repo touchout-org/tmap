@@ -10,6 +10,20 @@
   <p id="browser-warning" role="alert" hidden>This App works best in Chrome. Please switch to Chrome so you can connect to the Dot Pad.</p>
   <p id="dev-cache-banner" role="alert" hidden>DEV MODE: using cached local test data, not live Nominatim/Overpass. Do not deploy or push with this on.</p>
 
+  <div id="app-menu-row">
+    <button type="button" id="btn-connect" autofocus>Connect Dot Pad</button>
+    <div id="main-menu-container">
+      <button type="button" id="main-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="main-menu">Main Menu</button>
+      <ul id="main-menu" role="menu" aria-labelledby="main-menu-button" hidden>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-customize-map" aria-disabled="true">Customize Map</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-download-svg" aria-disabled="true">Download SVG</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-display-preferences">Display Preferences</button></li>
+        <!-- A "Login" item will be added here in a future update. -->
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-disconnect" hidden>Disconnect Dot Pad</button></li>
+      </ul>
+    </div>
+  </div>
+
   <h1>Welcome to DotTMAP</h1>
 
   <form id="search-form">
@@ -58,18 +72,8 @@
 
   <div id="message-display" role="alert" aria-live="assertive"></div>
 
-  <hr>
-  <h3>Controls</h3>
-  <div id="controls-row">
-    <button id="btn-connect" type="button">Connect Dot Pad</button>
-    <button id="btn-disconnect" type="button" hidden>Disconnect Dot Pad</button>
-    <button id="btn-edit-map" type="button" disabled>Edit map...</button>
-    <button id="btn-download-svg" type="button" disabled>Download SVG</button>
-    <button id="btn-settings" type="button">Settings...</button>
-  </div>
-
   <dialog id="edit-map-dialog" aria-labelledby="edit-map-dialog-heading">
-    <h3 id="edit-map-dialog-heading">Edit Map</h3>
+    <h3 id="edit-map-dialog-heading">Customize Map</h3>
     <details id="edit-map-pois">
       <summary><h4>POIs</h4></summary>
       <div class="edit-map-list" id="edit-map-pois-list"></div>
@@ -90,7 +94,7 @@
   </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">
-    <h3 id="settings-dialog-heading">Settings</h3>
+    <h3 id="settings-dialog-heading">Display Preferences</h3>
 
     <h4>Braille Options</h4>
     <div>
