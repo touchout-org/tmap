@@ -4,7 +4,7 @@
 // by simulating per-line device buffers and confirming a partial write
 // produces exactly the same final buffer state as a full-frame write would.
 import { packPixelsToHex } from '../../dotpad-toolkit/graphics/packPixelsToHex.js';
-import { drawCursorRing } from '../../dotpad-toolkit/graphics/rasterizer.js';
+import { drawCursorRing, drawLinePixels } from '../../dotpad-toolkit/graphics/rasterizer.js';
 
 const numCols = 30, numRows = 10;
 const displayW = numCols * 2, displayH = numRows * 4;
@@ -38,8 +38,25 @@ function setDotPadLineCommand(lineBuffers, lineIndex, localCellOffset, hexForLin
   lineBuffers[lineIndex] = merged;
 }
 
+// Matches app.js's drawReferenceGrid -- included here so this proof covers
+// the real case (static background content the cursor moves over), not
+// just a blank field, since a blank field would trivially pass even if the
+// addressing math were wrong about which rows are actually unchanged.
+function drawReferenceGrid(pixels) {
+  const cols = 6, rows = 4;
+  for (let c = 0; c <= cols; c++) {
+    const x = Math.min(displayW - 1, Math.round((c / cols) * (displayW - 1)));
+    drawLinePixels(pixels, displayW, displayH, x, 0, x, displayH - 1);
+  }
+  for (let r = 0; r <= rows; r++) {
+    const y = Math.min(displayH - 1, Math.round((r / rows) * (displayH - 1)));
+    drawLinePixels(pixels, displayW, displayH, 0, y, displayW - 1, y);
+  }
+}
+
 function buildPixels(cx, cy) {
   const pixels = new Uint8Array(displayW * displayH);
+  drawReferenceGrid(pixels);
   drawCursorRing(pixels, displayW, displayH, cx, cy);
   return pixels;
 }

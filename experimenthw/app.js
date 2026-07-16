@@ -14,7 +14,7 @@ import { connectDotPad, disconnectDotPad, watchDotPad } from '../../dotpad-toolk
 import { sendTextToDevice, truncateMessage } from '../../dotpad-toolkit/device/messageDisplay.js';
 import { sendGraphicToDevice, graphicsDimensions } from '../../dotpad-toolkit/device/graphicsDisplay.js';
 import { packPixelsToHex } from '../../dotpad-toolkit/graphics/packPixelsToHex.js';
-import { drawCursorRing } from '../../dotpad-toolkit/graphics/rasterizer.js';
+import { drawCursorRing, drawLinePixels } from '../../dotpad-toolkit/graphics/rasterizer.js';
 import { CURSOR_DOT, labelToByte6 } from '../../dotpad-toolkit/device/keys.js';
 
 const sdk = new DotPadSDK();
@@ -95,8 +95,28 @@ btnResetStats.addEventListener('click', () => {
 });
 
 // ---- Building a frame ----
+// Same reference grid DotTMAP draws on initial connect, before a real map
+// is loaded (see rasterizeTestGrid/sendTestGridToDevice in tmap/app.js) --
+// added here purely so the display has realistic static content for the
+// cursor to move over, rather than a blank field, while testing send
+// strategies. Being static, it never changes between frames -- only the
+// cursor ring's own row-span does, so it doesn't affect the partial-rows
+// strategy's change-detection below (see sendPartialRows).
+function drawReferenceGrid(pixels) {
+  const cols = 6, rows = 4;
+  for (let c = 0; c <= cols; c++) {
+    const x = Math.min(displayW - 1, Math.round((c / cols) * (displayW - 1)));
+    drawLinePixels(pixels, displayW, displayH, x, 0, x, displayH - 1);
+  }
+  for (let r = 0; r <= rows; r++) {
+    const y = Math.min(displayH - 1, Math.round((r / rows) * (displayH - 1)));
+    drawLinePixels(pixels, displayW, displayH, 0, y, displayW - 1, y);
+  }
+}
+
 function buildPixels() {
   const pixels = new Uint8Array(displayW * displayH);
+  drawReferenceGrid(pixels);
   drawCursorRing(pixels, displayW, displayH, cursorX, cursorY);
   return pixels;
 }
