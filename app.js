@@ -263,6 +263,10 @@ const settingsBrailleCodeSelect = document.getElementById('settings-braille-code
 const settingsUnitsSelect = document.getElementById('settings-units');
 const settingsPanAmountSelect = document.getElementById('settings-pan-amount');
 const btnSettingsDone = document.getElementById('btn-settings-done');
+const btnHelp = document.getElementById('menu-help');
+const helpDialog = document.getElementById('help-dialog');
+const helpContent = document.getElementById('help-content');
+const btnHelpClose = document.getElementById('btn-help-close');
 
 let hasAnchor = false;
 
@@ -775,6 +779,35 @@ settingsPanAmountSelect.addEventListener('change', () => {
   panAmountFraction = Number(settingsPanAmountSelect.value);
   setMessage(`Pan amount: ${settingsPanAmountSelect.selectedOptions[0].textContent}`);
 });
+
+// § Help — content lives in its own static file (help-content.html), not
+// inline in index.html, specifically so it's easy to hand-edit without
+// digging through the rest of the page markup. Fetched once and cached in
+// helpContentHtml; every later open reuses the cached copy rather than
+// re-fetching. A failed fetch shows an inline error instead of leaving the
+// dialog silently blank.
+let helpContentHtml = null;
+
+btnHelp.addEventListener('click', async () => {
+  closeMainMenu({ focusButton: true });
+  if (helpContentHtml === null) {
+    helpContent.textContent = 'Loading help…';
+    helpDialog.showModal();
+    try {
+      const res = await fetch('help-content.html');
+      if (!res.ok) throw new Error('help-content-failed');
+      helpContentHtml = await res.text();
+    } catch (err) {
+      helpContent.textContent = 'Could not load help content.';
+      return;
+    }
+  } else {
+    helpDialog.showModal();
+  }
+  helpContent.innerHTML = helpContentHtml;
+});
+
+btnHelpClose.addEventListener('click', () => helpDialog.close());
 
 // § Braille labels — shared toggle used by both the dialog checkboxes and
 // the i/j/k/l hotkeys. Reports the new state in the message field per

@@ -68,6 +68,7 @@ A WAI-ARIA "Actions Menu Button" opened by the "Main Menu" button at the top of 
 * **"Customize Map"** — opens the dialog formerly labeled "Edit map..."; unchanged in every other respect, see [Editing the Map](#editing-the-map). Disabled (present but not activatable, `aria-disabled`, not native `disabled` — so it stays keyboard-navigable) until an anchor POI exists, same condition as before the menu conversion.
 * **"Download SVG"** — see [Download to Local SVG](#download-to-local-svg). Same disabled-until-anchor condition as Customize Map.
 * **"Display Preferences"** — opens the dialog formerly labeled "Settings..."; unchanged in every other respect, see [Settings](#settings). Always enabled.
+* **"Help"** — opens a Help dialog documenting every hotkey/Dot Pad key combo plus a brief non-hotkey section for each dialog, see [Help](#help). Always enabled.
 * *(Planned, not yet built: a "Login" item for the eventual account/sign-in flow — see [Authentication](#authentication) — and, per the existing P2 plan, a "My Archives" item for cloud save/load — see [Saving and exporting](#saving-and-exporting). Neither is scheduled ahead of its existing Phase 5 placement; noted here only so the Main Menu's eventual full shape is clear.)*
 * **"Disconnect Dot Pad"** — only present at all while a Dot Pad is connected; entirely absent (not just disabled) while disconnected. This is the counterpart to the main-screen "Connect Dot Pad" button (see below) — the two are never both present, and Disconnect never appears on the main screen itself.
 
@@ -116,7 +117,15 @@ Cursor rows match the dot mapping already established in [Cursor and hit testing
 
 The `i`/`j`/`k`/`l` hotkeys and the Braille Labels dialog's four checkboxes drive one shared piece of state, not two independent ones. The hotkeys work regardless of whether the dialog is open; whenever the dialog is opened (or reopened), each checkbox simply reflects whatever that shared state currently is — there's no separate sync step, the checkbox display is a live view of the same toggle the hotkeys set.
 
-## SVG Display Requirements
+## Help
+
+Opens from the Main Menu — see [Main Menu](#main-menu). A single dialog covering every hotkey/Dot Pad key combo in the app, plus a brief description of each dialog that doesn't have its own hotkey. Added 2026-07-15 after user feedback (from someone shown the app) that there were a lot of key combinations to know about with no in-page documentation.
+
+Sections, in order: Getting Started, Connecting the Dot Pad, Cursor Movement, Panning, Scale and Map Complexity, Points of Interest (POIs), Braille Labels, Message Display, Drop Pin, Display Preferences, Map Customization. The six hotkey-table sections (Cursor Movement, Panning, Scale and Map Complexity, POIs, Braille Labels, Message Display) each use a 4-column table — Function, Hotkey, Dot Keys, Description — reproducing the same bindings as the [Command / hotkey mapping](#command--hotkey-mapping) table above, just grouped by topic with a plain-language description per row rather than one flat table. The remaining sections (Getting Started, Connecting the Dot Pad, Drop Pin, Display Preferences, Map Customization) are brief prose only, no table — Connecting the Dot Pad additionally includes a numbered step-by-step (power on the device, press Connect Dot Pad, Shift-Tab twice to the browser's device picker, arrow down to the device, Enter to connect).
+
+**Content lives in its own file, `help-content.html`, fetched and injected into the dialog on first open** (cached after that — later opens reuse the fetched copy rather than re-fetching) — a deliberate choice so the help text itself can be hand-edited without touching `index.html` or `app.js`. The file is a bare HTML fragment (`<h4>`/`<p>`/`<table>`/`<ol>` only, no `<html>`/`<head>`/`<body>` wrapper) meant to be dropped into the dialog's content container via `innerHTML`.
+
+The whole draft was iterated on in chat before any code was written, at the user's explicit request ("put your proposed help content here in our chat for my review... before proceeding") — several rounds of wording changes (compass directions instead of up/down/left/right for Cursor Movement and Panning, rephrased Map Complexity rows, swapped Function/Description phrasing for Braille Labels, a footnote asterisk on every "Dot Keys" column header) were made against the plain-text draft, then the agreed-on final version was what got built.
 
 * Use SVG to manage all segments and POIs.
 * The full canvas is in the ratio 3x2 to conform to the Dot Pad dimensions. Canvas dimensions change if braille labels are being used.

@@ -1,0 +1,137 @@
+<h4>Getting Started</h4>
+<p>Type an address or place name into the field at the top of the page and press Search (or Enter) to create your first map, centered on that location — this becomes the "anchor POI." Once a map exists, entering another nearby location either adds it to the current map as an additional POI, or, if it's too far away, offers to start a new map centered there instead.</p>
+<p>* * note: There are 6 keys on the DotPad. The following documentation uses Perkins-style dot number notation to describe commands entered from the DotPad itself.</p>
+
+<h4>Connecting the Dot Pad</h4>
+<p>Use the Connect Dot Pad button (top of the page) to pair with a physical Dot Pad over Bluetooth — this requires Chrome, since Web Bluetooth isn't available in other browsers.</p>
+<p>Steps to connect:</p>
+<ol>
+  <li>Turn on the Dot Pad and wait for it to complete power-up.</li>
+  <li>Press the "Connect Dot Pad" button on the web page.</li>
+  <li>Shift-Tab twice to focus the device selection control.</li>
+  <li>Press Down arrow to select the Dot Pad device.</li>
+  <li>Press Enter to connect. If the connection is successful, a grid or map will appear on the display.</li>
+  <li>Once connected, Disconnect Dot Pad appears at the bottom of the Main Menu.</li>
+</ol>
+
+<h4>Cursor Movement</h4>
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Function</th>
+      <th scope="col">Hotkey</th>
+      <th scope="col">Dot Keys*</th>
+      <th scope="col">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Cursor North</td><td>Up arrow</td><td>Dot 2</td><td>Moves the cursor north by one pixel</td></tr>
+    <tr><td>Cursor South</td><td>Down arrow</td><td>Dot 5</td><td>Moves the cursor south by one pixel</td></tr>
+    <tr><td>Cursor East</td><td>Right arrow</td><td>Dot 6</td><td>Moves the cursor east by one pixel</td></tr>
+    <tr><td>Cursor West</td><td>Left arrow</td><td>Dot 3</td><td>Moves the cursor west by one pixel</td></tr>
+  </tbody>
+</table>
+<p>Moving the cursor past the edge of the current view pans the map automatically in that direction; if the fetched data itself ends, you'll hear a beep and "Edge of Map" will be displayed.</p>
+
+<h4>Panning</h4>
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Function</th>
+      <th scope="col">Hotkey</th>
+      <th scope="col">Dot Keys*</th>
+      <th scope="col">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Pan North</td><td>Ctrl+Up arrow</td><td>Dots 1+4</td><td>Shifts the view window north</td></tr>
+    <tr><td>Pan South</td><td>Ctrl+Down arrow</td><td>Dots 3+6</td><td>Shifts the view window south</td></tr>
+    <tr><td>Pan East</td><td>Ctrl+Right arrow</td><td>Dots 4+6</td><td>Shifts the view window east</td></tr>
+    <tr><td>Pan West</td><td>Ctrl+Left arrow</td><td>Dots 1+3</td><td>Shifts the view window west</td></tr>
+  </tbody>
+</table>
+<p>Panning past the edge of the fetched data plays a tone and reports "Edge of Map." How far each pan moves is set by Pan Amount in Display Preferences.</p>
+
+<h4>Scale and Map Complexity</h4>
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Function</th>
+      <th scope="col">Hotkey</th>
+      <th scope="col">Dot Keys*</th>
+      <th scope="col">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Increase scale (zoom out)</td><td>[</td><td>Dots 2+3</td><td>Shows more real-world area</td></tr>
+    <tr><td>Decrease scale (zoom in)</td><td>]</td><td>Dots 5+6</td><td>Shows less real-world area, more detail</td></tr>
+    <tr><td>Show all streets and pathways</td><td>1</td><td>none</td><td>Shows every mapped street and path</td></tr>
+    <tr><td>Show simplified neighborhoods</td><td>2</td><td>none</td><td>All streets except bike and foot paths</td></tr>
+    <tr><td>Show only major streets and highways</td><td>3</td><td>none</td><td>Arterials and highways; makes maps readable at larger scales</td></tr>
+    <tr><td>Show only major highways</td><td>4</td><td>none</td><td>Shows only the most significant roads</td></tr>
+    <tr><td>Toggle cursor-only mode</td><td>0</td><td>none</td><td>Temporarily hides everything but the cursor</td></tr>
+  </tbody>
+</table>
+<p>The Map Complexity hotkeys are a shortcut for the same control found in Map Customization. Cursor-only mode is a temporary display override — press <code>0</code> again to restore exactly what was showing before.</p>
+
+<h4>Points of Interest (POIs)</h4>
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Function</th>
+      <th scope="col">Hotkey</th>
+      <th scope="col">Dot Keys*</th>
+      <th scope="col">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Open Drop Pin dialog</td><td>a</td><td>none</td><td>Add a custom-named POI at the cursor</td></tr>
+    <tr><td>Next POI</td><td>.</td><td>Dot 4</td><td>Jumps to the next POI in the list</td></tr>
+    <tr><td>Previous POI</td><td>,</td><td>Dot 1</td><td>Jumps to the previous POI in the list</td></tr>
+  </tbody>
+</table>
+
+<h4>Braille Labels</h4>
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Function</th>
+      <th scope="col">Hotkey</th>
+      <th scope="col">Dot Keys*</th>
+      <th scope="col">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Toggle top labels</td><td>i</td><td>none</td><td>Show/hide braille labels at the top</td></tr>
+    <tr><td>Toggle bottom labels</td><td>k</td><td>none</td><td>Show/hide braille labels at the bottom</td></tr>
+    <tr><td>Toggle left labels</td><td>j</td><td>none</td><td>Show/hide braille labels at the left</td></tr>
+    <tr><td>Toggle right labels</td><td>l</td><td>none</td><td>Show/hide braille labels at the right</td></tr>
+  </tbody>
+</table>
+<p>These toggle the same four label zones as the checkboxes in Display Preferences — either place works, they share one state.</p>
+
+<h4>Message Display</h4>
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Function</th>
+      <th scope="col">Hotkey</th>
+      <th scope="col">Dot Keys*</th>
+      <th scope="col">Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Next message chunk</td><td>none</td><td>Dots 4+5+6</td><td>Pages forward through a long message on the Dot Pad</td></tr>
+    <tr><td>Previous message chunk</td><td>none</td><td>Dots 1+2+3</td><td>Pages backward through a long message on the Dot Pad</td></tr>
+  </tbody>
+</table>
+<p>Long messages are split into chunks that fit the Dot Pad's message display. There's no keyboard equivalent, since your screen reader already reads the full message on-screen.</p>
+
+<h4>Drop Pin</h4>
+<p>Opens via the <code>a</code> hotkey or the Drop Pin button next to the POI list. DotTMAP looks up nearby addresses, tourist attractions, and businesses from OpenStreetMap and lists them alphabetically; the first one fills in the name field automatically. Up/Down step through the rest of the suggestions (they stop at either end, no wraparound), or you can just type your own name. OK always drops the new POI at the cursor's current position, no matter which suggestion is showing; Cancel adds nothing.</p>
+
+<h4>Display Preferences</h4>
+<p>Opens from the Main Menu. Every control here applies immediately — there's no OK/Cancel, just a Done button to close it. Includes Braille Translation, the four braille label checkboxes, Units (Imperial/Metric — affects Scale and how distances are announced), Scale, and Pan Amount.</p>
+
+<h4>Map Customization</h4>
+<p>Opens from the Main Menu (formerly "Edit map..."). Shows or hides individual POIs and streets, lists everything currently hidden in one place, and includes the Map Complexity control — every action here takes effect immediately, with no Save/Cancel step.</p>

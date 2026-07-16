@@ -226,6 +226,35 @@ body {
   max-width: 24rem;
 }
 
+/* § Help — much richer content (several tables) than the other dialogs, so
+   it gets its own wider, scrollable box rather than sharing the 24rem
+   max-width above. */
+#help-dialog {
+  border: 1px solid #999;
+  border-radius: 4px;
+  padding: 1rem 1.25rem;
+  max-width: 42rem;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+#help-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+}
+
+#help-content th,
+#help-content td {
+  border: 1px solid #ccc;
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+
+#help-content ol {
+  padding-left: 1.5rem;
+}
+
 #custom-poi-form {
   display: flex;
   flex-direction: column;
