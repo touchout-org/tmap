@@ -1,0 +1,28 @@
+body {
+  font-family: sans-serif;
+  max-width: 40em;
+  margin: 1em auto;
+  padding: 0 1em;
+}
+
+fieldset {
+  margin-bottom: 1em;
+}
+
+#stats-panel dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25em 1em;
+}
+
+#stats-panel dt {
+  font-weight: bold;
+}
+
+#stats-panel dd {
+  margin: 0;
+}
+
+#message:empty {
+  display: none;
+}

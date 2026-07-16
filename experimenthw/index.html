@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DotPad Cursor Performance Experiment</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<h1>DotPad Cursor Performance Experiment</h1>
+<p>Fixed 60x40 tactile display, no pan or zoom. Move the cursor with the arrow keys or the Dot Pad's cursor dots (3/2/5/6 = left/up/down/right) and use the controls below to test different strategies for keeping the display responsive under rapid cursoring.</p>
+
+<p id="browser-warning" role="alert" hidden>This App works best in Chrome. Please switch to Chrome so you can connect to the Dot Pad.</p>
+
+<div id="connect-row">
+  <button type="button" id="btn-connect" autofocus>Connect Dot Pad</button>
+  <button type="button" id="btn-disconnect" hidden>Disconnect Dot Pad</button>
+</div>
+
+<p id="message" role="alert" aria-live="assertive"></p>
+
+<fieldset id="payload-strategy-group">
+  <legend>Payload strategy (what gets sent to the device on each cursor move)</legend>
+  <label><input type="radio" name="payload-strategy" value="clear-redraw" checked> Clear + full redraw (current DotTMAP/toolkit default — two full-frame writes per move)</label><br>
+  <label><input type="radio" name="payload-strategy" value="single-frame"> Single full-frame write (skip the redundant clear pass — one write per move)</label><br>
+  <label><input type="radio" name="payload-strategy" value="partial-rows"> Partial write — only the changed cell-rows (bypasses the SDK's top-level wrapper to address a sub-range directly; experimental, see code comments)</label>
+</fieldset>
+
+<fieldset id="pacing-group">
+  <legend>Send pacing</legend>
+  <label><input type="checkbox" id="chk-coalesce" checked> Coalesce rapid moves (drop superseded in-flight positions, always send the latest)</label><br>
+  <label for="input-interval">Minimum time between sends (ms):</label>
+  <input type="number" id="input-interval" min="0" max="1000" step="10" value="80">
+</fieldset>
+
+<div id="stats-panel" aria-hidden="true">
+  <h2>Live stats</h2>
+  <dl>
+    <dt>Cursor position</dt><dd id="stat-position">—</dd>
+    <dt>Keydown events received</dt><dd id="stat-keydowns">0</dd>
+    <dt>Sends issued</dt><dd id="stat-sends">0</dd>
+    <dt>Moves coalesced (dropped)</dt><dd id="stat-coalesced">0</dd>
+    <dt>Last payload size (hex chars)</dt><dd id="stat-payload-size">—</dd>
+    <dt>Last inter-send gap (ms)</dt><dd id="stat-gap">—</dd>
+  </dl>
+  <button type="button" id="btn-reset-stats">Reset stats</button>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
