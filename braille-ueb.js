@@ -133,7 +133,7 @@ export const UEB_G2_RULES = [
   { text: "prostheses", position: "sufword", cells: [15, 23, 21, 14, 46, 14, 17, 14] },
   { text: "prosthesis", position: "sufword", cells: [15, 23, 21, 14, 46, 14, 10, 14] },
   { text: "prosthetic", position: "sufword", cells: [15, 23, 21, 14, 46, 30, 10, 9] },
-  { text: "southeast", position: "sufword", cells: [14, 51, 57, 2, 12] },
+  { text: "southeast", position: "sufword", cells: [14, 51, 57, 17, 1, 12] },
   { text: "southend", position: "sufword", cells: [14, 51, 57, 34, 25] },
   { text: "southesk", position: "sufword", cells: [14, 51, 57, 17, 14, 5] },
   { text: "strathearn", position: "sufword", cells: [12, 23, 1, 57, 17, 28, 29] },

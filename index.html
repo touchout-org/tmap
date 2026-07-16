@@ -15,10 +15,10 @@
     <div id="main-menu-container">
       <button type="button" id="main-menu-button" aria-haspopup="true" aria-expanded="false" aria-controls="main-menu">Main Menu</button>
       <ul id="main-menu" role="menu" aria-labelledby="main-menu-button" hidden>
-        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-customize-map" aria-disabled="true">Customize Map</button></li>
-        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-download-svg" aria-disabled="true">Download SVG</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-display-preferences">Display Preferences</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-customize-map" aria-disabled="true">Customize Map</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-help">Help</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-download-svg" aria-disabled="true">Download SVG</button></li>
         <!-- A "Login" item will be added here in a future update. -->
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-disconnect" hidden>Disconnect Dot Pad</button></li>
       </ul>
@@ -151,9 +151,9 @@
   </dialog>
 
   <dialog id="help-dialog" aria-labelledby="help-dialog-heading">
+    <button id="btn-help-close" type="button">Close</button>
     <h3 id="help-dialog-heading">Help</h3>
     <div id="help-content"></div>
-    <button id="btn-help-close" type="button">Close</button>
   </dialog>
 
   <footer>
