@@ -312,6 +312,71 @@ let scaleIndex = DEFAULT_SCALE_INDEX;
 // (see spec § Command / hotkey mapping). [none checked] is the default.
 let labelZones = { top: false, bottom: false, left: false, right: false };
 
+// § Settings — Settings persistence across sessions, local-only via
+// localStorage, independent of sign-in (see tmap spec.md § Settings /
+// Accounts and Data). Covers exactly the four settings that already
+// survive a new anchor search unchanged (brailleCodeSetting, unitSystem,
+// panAmountFraction, labelZones) -- deliberately NOT scaleIndex, since
+// showAnchor already resets that to DEFAULT_SCALE_INDEX on every new
+// search regardless of any prior value, so persisting it would silently
+// do nothing (it'd load correctly, then get overwritten the instant a
+// search happens) and risk looking like a broken feature rather than no
+// feature at all.
+const SETTINGS_STORAGE_KEY = 'dottmap-settings';
+
+// Reads and validates persisted settings, applying only fields that pass
+// a sanity check against the actual set of valid values -- localStorage
+// content can't be trusted blindly (a future app version could narrow the
+// valid set, or the value could be corrupted/hand-edited), so an invalid
+// field is just left at its normal built-in default rather than applied
+// as-is or treated as a fatal error.
+function loadPersistedSettings() {
+  let stored;
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return;
+    stored = JSON.parse(raw);
+  } catch (err) {
+    return;
+  }
+  if (!stored || typeof stored !== 'object') return;
+
+  if (stored.brailleCodeSetting === 'computer8' || stored.brailleCodeSetting === 'ueb1' || stored.brailleCodeSetting === 'ueb2') {
+    brailleCodeSetting = stored.brailleCodeSetting;
+  }
+  if (stored.unitSystem === 'imperial' || stored.unitSystem === 'metric') {
+    unitSystem = stored.unitSystem;
+  }
+  if (typeof stored.panAmountFraction === 'number' && [0.25, 0.5, 0.75, 1].includes(stored.panAmountFraction)) {
+    panAmountFraction = stored.panAmountFraction;
+  }
+  if (stored.labelZones && typeof stored.labelZones === 'object') {
+    for (const zone of ['top', 'bottom', 'left', 'right']) {
+      if (typeof stored.labelZones[zone] === 'boolean') labelZones[zone] = stored.labelZones[zone];
+    }
+  }
+}
+
+// Called after every change to one of the four persisted settings (see
+// each control's own change listener, and setLabelZone). Failure (e.g.
+// storage disabled/full in this browser) is silently ignored -- this is a
+// convenience feature, not a P0 requirement to surface errors for like
+// Nominatim/Overpass failures are.
+function savePersistedSettings() {
+  try {
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify({
+      brailleCodeSetting,
+      unitSystem,
+      panAmountFraction,
+      labelZones
+    }));
+  } catch (err) {
+    // Ignored -- see comment above.
+  }
+}
+
+loadPersistedSettings();
+
 // § Editing the Map — names of POIs/streets the user has unchecked in the
 // Edit Map dialog (Streets and Pedestrian Pathways are merged into one
 // name-keyed set now that the dialog no longer classifies by way class).
@@ -749,6 +814,7 @@ btnSettingsDone.addEventListener('click', () => settingsDialog.close());
 
 settingsBrailleCodeSelect.addEventListener('change', () => {
   brailleCodeSetting = settingsBrailleCodeSelect.value;
+  savePersistedSettings();
   // Rebuilds the virtual message window (resets to its first chunk -- see
   // rebuildMessageWindow) and re-sends it, re-encoded under the new
   // setting. The on-screen text/ARIA announcement don't change (nothing
@@ -766,6 +832,7 @@ settingsBrailleCodeSelect.addEventListener('change', () => {
 // keeping each unit system's scale ladder on clean round numbers).
 settingsUnitsSelect.addEventListener('change', () => {
   unitSystem = settingsUnitsSelect.value;
+  savePersistedSettings();
   refreshScaleOptions();
   setMessage(`Units: ${unitSystem === 'metric' ? 'Metric' : 'Imperial'}`);
   refreshMap();
@@ -777,6 +844,7 @@ settingsUnitsSelect.addEventListener('change', () => {
 // changes the size of the *next* pan, nothing currently on screen.
 settingsPanAmountSelect.addEventListener('change', () => {
   panAmountFraction = Number(settingsPanAmountSelect.value);
+  savePersistedSettings();
   setMessage(`Pan amount: ${settingsPanAmountSelect.selectedOptions[0].textContent}`);
 });
 
@@ -815,6 +883,7 @@ btnHelpClose.addEventListener('click', () => helpDialog.close());
 function setLabelZone(zone, value) {
   if (labelZones[zone] === value) return;
   labelZones[zone] = value;
+  savePersistedSettings();
   setMessage(`${zone} labels ${value ? 'on' : 'off'}`);
   refreshMap();
 }

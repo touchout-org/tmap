@@ -345,6 +345,8 @@ The Settings dialog (opened via "Display Preferences" in the [Main Menu](#main-m
 
 (Earlier in development, Braille Translation was staged behind OK/Cancel while the other controls were live-apply — a deliberate divergence at the time. That distinction was removed once Braille Translation itself became live-apply, since a staged/live-apply split within one dialog was more confusing than useful. Treat live-apply as the model for any future Settings control, not staged.)
 
+**Persists across sessions, added 2026-07-15:** Braille Translation, the four label-zone checkboxes, Units, and Pan Amount are all saved to `localStorage` on every change and restored on page load, independent of sign-in (see [Accounts and Data](#accounts-and-data) § Local development and testing) — a page reload or a fresh visit picks up right where the last one left off. **Scale is deliberately excluded**: it already resets to `DEFAULT_SCALE_INDEX` on every new anchor search regardless of any prior value (see [Scale behavior](#scale-behavior)), so persisting it would load correctly and then silently get overwritten the instant a search happens — worse than not persisting it at all, since it would look like a broken feature rather than an intentionally-scoped one. A malformed or corrupted stored value for any field (a hand-edited or stale-format `localStorage` entry) is validated per-field on load and falls back to that field's normal built-in default rather than being applied as-is or crashing the page.
+
 The dialog is organized into sub-sections, each under its own heading:
 
 * **"Braille Options" heading**:
@@ -493,7 +495,7 @@ Priority tiers as set by the user on 2026-07-08:
 | Google authentication | Identity management | Resolved 2026-07-08: Firebase Authentication (see [Authentication](#authentication)) |
 | Cloud storage backend | Identity management / My Archives | Resolved 2026-07-08: Firebase/Firestore, chosen over Supabase and Appwrite because its free tier has no inactivity pause (see [Cloud storage](#cloud-storage)) |
 | My Archives (save current map to cloud account; save/load/rename/delete) | My Archives | Distinct from Download (P1, local file only) — Save is for returning to in-progress work like manual POI/street-visibility edits. Format-versioning resolved as a manageable risk (2026-07-08): migrate legacy data if the save format ever changes, or avoid breaking changes in the first place — no dedicated migration system required as a feature |
-| Settings persistence across sessions | Saving settings | Decided 2026-07-15: local-only via `localStorage`, independent of sign-in — works for every user whether or not they ever log in, and needs no Firebase integration at all. Can ship well ahead of the rest of this phase, since it has no dependency on Authentication/Cloud storage below |
+| ~~Settings persistence across sessions~~ | Saving settings | Done, 2026-07-15 — local-only via `localStorage`, independent of sign-in, shipped ahead of the rest of this phase since it has no dependency on Authentication/Cloud storage below. Covers Braille Translation, Units, Pan Amount, and the four label zones — deliberately not Scale, which already resets to its default on every new anchor search regardless (see [Settings](#settings)) |
 
 ## Prioritized Research & Implementation List
 
@@ -536,7 +538,7 @@ Priority tiers as set by the user on 2026-07-08:
 20. ~~Decide cloud storage backend~~ — done: Firebase/Firestore (see [Cloud storage](#cloud-storage)). Implementation itself still happens in this phase.
 21. Google auth integration via Firebase Authentication (see [Authentication](#authentication)).
 22. My Archives (save/load/rename/delete) — distinct from Download, which ships in Phase 3 as a P1 feature needing no account. Format-versioning risk is resolved as a policy (migrate legacy data or avoid breaking format changes), not a system to build — see [Open Questions & Critical Gaps](#open-questions--critical-gaps).
-23. Settings persistence across sessions — local-only via `localStorage`, no Firebase dependency (see [Settings](#settings)); can be built independently of the rest of this phase.
+23. ~~Settings persistence across sessions~~ — done, local-only via `localStorage`, no Firebase dependency (see [Settings](#settings)).
 24. ~~Braille translator library selection/build (multi-code: formalizing 8-dot computer plus adding US uncontracted and contracted UEB)~~ — done, ahead of the rest of Phase 5 (see [Braille translator](#braille-translator)); built now specifically because it's a prerequisite for the Settings dialog's Braille Translation control, which doesn't depend on accounts/auth.
 
 ## Appendix: Retired Automated Data Cleaning Pipeline
