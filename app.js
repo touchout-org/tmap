@@ -3049,6 +3049,67 @@ btnDownloadSvg.addEventListener('click', () => {
   downloadExportSvg();
 });
 
+// § Cursor and hit testing — send pacing. Every cursor move used to
+// trigger an immediate full clear-then-redraw graphics write AND an
+// immediate message-line write, with no minimum interval -- under rapid
+// keying (including OS keyboard auto-repeat) this could fire many times a
+// second, which is what made the display get sluggish/confused. Scoped to
+// pure cursor moves only: the general renderScene() redraw path (pan,
+// scale, label toggles, edits) is untouched, still an immediate full
+// clear+redraw, since those are comparatively rare, deliberate actions,
+// not a rapid-fire input stream.
+//   - Coalescing: a trailing-edge throttle collapses a burst of rapid
+//     moves into one deferred send using whatever state is current when
+//     it actually fires, instead of sending once per keystroke.
+//   - The clear pass is dropped for these coalesced graphics sends
+//     specifically -- a full frame already completely describes the
+//     desired state (every off pixel is an explicit 0 in the packed
+//     data), so a preceding all-zero write is pure waste here.
+const CURSOR_SEND_INTERVAL_MS = 80; // tune against real hardware
+
+function createCoalescer(intervalMs, flush) {
+  let lastSentAt = -Infinity; // guarantees the very first call in this coalescer's lifetime sends immediately
+  let timer = null;
+  let pending;
+  return function schedule(payload) {
+    pending = payload;
+    const now = performance.now();
+    const elapsed = now - lastSentAt;
+    if (elapsed >= intervalMs && timer === null) {
+      lastSentAt = now;
+      flush(payload);
+      return;
+    }
+    if (timer === null) {
+      const wait = Math.max(0, intervalMs - elapsed);
+      timer = setTimeout(() => {
+        timer = null;
+        lastSentAt = performance.now();
+        flush(pending);
+      }, wait);
+    }
+  };
+}
+
+const scheduleCursorGraphicSend = createCoalescer(CURSOR_SEND_INTERVAL_MS, () => {
+  if (currentDevice) sendGraphicToDevice(currentDevice, { skipClear: true });
+});
+
+// § Cursor and hit testing — the message-line counterpart: skips the
+// device resend entirely when the announced text hasn't changed (sweeping
+// the cursor across open space between features previously re-sent the
+// same blank/unchanged message every single move), and coalesces genuine
+// changes the same way as the graphics send above. Dedup is checked at
+// flush time (against the last text actually sent), not at schedule time,
+// so a quick back-and-forth that nets out to no real change doesn't
+// re-announce a stale intermediate value.
+let lastCursorAnnouncedText = null;
+const scheduleCursorMessageSend = createCoalescer(CURSOR_SEND_INTERVAL_MS, (text) => {
+  if (text === lastCursorAnnouncedText) return;
+  lastCursorAnnouncedText = text;
+  setMessage(text);
+});
+
 // § Command / hotkey mapping — cursor moves one display pixel per press, no
 // acceleration. Shared by both the arrow keys and the Dot Pad's dots 3/2/5/6.
 function moveCursor(dx, dy) {
@@ -3079,11 +3140,8 @@ function moveCursor(dx, dy) {
   // display rather than announcing "No street": an absence isn't worth
   // interrupting/re-announcing over, especially while sweeping the cursor
   // across open space between features.
-  setMessage(currentObjectNames() || '');
-
-  if (currentDevice) {
-    sendGraphicToDevice(currentDevice);
-  }
+  scheduleCursorMessageSend(currentObjectNames() || '');
+  scheduleCursorGraphicSend();
 }
 
 // § Pan Behavior — an explicit pan carries the cursor's fixed real-world
@@ -3587,16 +3645,24 @@ function rasterizeTestGrid(displayW, displayH, cols, rows) {
   return pixels;
 }
 
-function sendPixelsToDevice(device, pixels, numCols, numRows) {
+function sendPixelsToDevice(device, pixels, numCols, numRows, { skipClear = false } = {}) {
   const displayW = numCols * 2;
   const displayH = numRows * 4;
   const hex = packPixelsToHex(pixels, displayW, displayH, numRows);
-  const zeros = '00'.repeat(numCols * numRows);
-  sdk.displayGraphicData(zeros, device, DisplayMode.GraphicMode);
+  // § Cursor and hit testing — the clear pass is skipped for coalesced
+  // cursor-move sends (see scheduleCursorGraphicSend): a full frame is
+  // already a complete description of the desired state, so writing all
+  // zeros first is pure waste there. Left as the default for every other
+  // caller (pan/scale/label-toggle/edit redraws, the initial connect-time
+  // grid), which isn't part of this change.
+  if (!skipClear) {
+    const zeros = '00'.repeat(numCols * numRows);
+    sdk.displayGraphicData(zeros, device, DisplayMode.GraphicMode);
+  }
   sdk.displayGraphicData(hex, device, DisplayMode.GraphicMode);
 }
 
-function sendGraphicToDevice(device) {
+function sendGraphicToDevice(device, { skipClear = false } = {}) {
   const viewportBbox = getViewportBbox();
   if (!viewportBbox) return;
   const numCols = device.numberCellColumns;
@@ -3605,7 +3671,7 @@ function sendGraphicToDevice(device) {
   const displayH = numRows * 4;
   const cursor = cursorGridPosition(viewportBbox);
   const pixels = rasterizeMapToPixels(viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon, displayW, displayH, cursor);
-  sendPixelsToDevice(device, pixels, numCols, numRows);
+  sendPixelsToDevice(device, pixels, numCols, numRows, { skipClear });
 }
 
 function sendTestGridToDevice(device) {
