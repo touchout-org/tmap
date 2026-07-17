@@ -256,6 +256,7 @@ const editMapHiddenFeaturesList = document.getElementById('edit-map-hidden-featu
 const editMapComplexityList = document.getElementById('edit-map-complexity-list');
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
 const btnDownloadSvg = document.getElementById('menu-download-svg');
+const btnFileIssue = document.getElementById('btn-file-issue');
 const btnSettings = document.getElementById('menu-display-preferences');
 const btnDisconnect = document.getElementById('menu-disconnect');
 const settingsDialog = document.getElementById('settings-dialog');
@@ -3047,6 +3048,12 @@ btnDownloadSvg.addEventListener('click', () => {
   if (btnDownloadSvg.getAttribute('aria-disabled') === 'true') return;
   closeMainMenu({ focusButton: true });
   downloadExportSvg();
+});
+
+// § Footer — opens a new GitHub issue against this repo in a new tab, so
+// filing a bug doesn't lose the current map/cursor state on this page.
+btnFileIssue.addEventListener('click', () => {
+  window.open('https://github.com/touchout-org/tmap/issues/new', '_blank', 'noopener,noreferrer');
 });
 
 // § Cursor and hit testing — send pacing. Every cursor move used to
