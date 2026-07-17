@@ -26,3 +26,15 @@ fieldset {
 #message:empty {
   display: none;
 }
+
+#key-spacing-panel table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+#key-spacing-panel th,
+#key-spacing-panel td {
+  border: 1px solid;
+  padding: 0.25em 0.5em;
+  text-align: left;
+}

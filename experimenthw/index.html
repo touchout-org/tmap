@@ -45,6 +45,17 @@
   <button type="button" id="btn-reset-stats">Reset stats</button>
 </div>
 
+<div id="key-spacing-panel" aria-hidden="true">
+  <h2>Key spacing (Dot Pad single dots only, no chords)</h2>
+  <p>For consecutive presses of the same lone dot, the mean time between presses. A different key, or a pause of 0.5s or more, closes out the current row. Most recent at top, last 10 rows kept.</p>
+  <table>
+    <thead>
+      <tr><th scope="col">Key</th><th scope="col">Mean (ms)</th><th scope="col">Values</th></tr>
+    </thead>
+    <tbody id="key-spacing-body"></tbody>
+  </table>
+</div>
+
 <script type="module" src="app.js"></script>
 </body>
 </html>

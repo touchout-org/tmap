@@ -16,6 +16,7 @@ import { sendGraphicToDevice, graphicsDimensions } from '../../dotpad-toolkit/de
 import { packPixelsToHex } from '../../dotpad-toolkit/graphics/packPixelsToHex.js';
 import { drawCursorRing, drawLinePixels } from '../../dotpad-toolkit/graphics/rasterizer.js';
 import { CURSOR_DOT, labelToByte6 } from '../../dotpad-toolkit/device/keys.js';
+import { createKeySpacingTracker } from './keySpacing.js';
 
 const sdk = new DotPadSDK();
 const scanner = new DotPadScanner();
@@ -60,6 +61,7 @@ const statGap = document.getElementById('stat-gap');
 const btnResetStats = document.getElementById('btn-reset-stats');
 const inputInterval = document.getElementById('input-interval');
 const chkCoalesce = document.getElementById('chk-coalesce');
+const keySpacingBody = document.getElementById('key-spacing-body');
 
 function currentPayloadStrategy() {
   return document.querySelector('input[name="payload-strategy"]:checked').value;
@@ -283,6 +285,38 @@ document.addEventListener('keydown', (event) => {
   moveCursor(delta[0], delta[1]);
 });
 
+// ---- Key spacing (single dots only, no chords) ----
+// Measures how quickly consecutive presses of the SAME lone dot are read,
+// per keySpacing.js -- see that file for the timing state machine itself.
+// Scoped to single dots specifically because a chord (multiple dots, or a
+// paddle combo) goes through the SDK's ~200ms chord-assembly debounce
+// before it's even resolved into one event; a lone dot doesn't wait for
+// that, so this is where read responsiveness should be closest to
+// real-time and most worth measuring.
+const DOT_BITS = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20]; // dot1..dot6, single bit each
+function singleDotName(byte6) {
+  const idx = DOT_BITS.indexOf(byte6);
+  return idx === -1 ? null : `dot ${idx + 1}`;
+}
+
+const KEY_SPACING_MAX_ROWS = 10;
+function addKeySpacingRow({ name, mean, count }) {
+  const row = document.createElement('tr');
+  const nameCell = document.createElement('td');
+  const meanCell = document.createElement('td');
+  const countCell = document.createElement('td');
+  nameCell.textContent = name;
+  meanCell.textContent = mean === null ? '—' : mean.toFixed(1);
+  countCell.textContent = count;
+  row.append(nameCell, meanCell, countCell);
+  keySpacingBody.insertBefore(row, keySpacingBody.firstChild);
+  while (keySpacingBody.children.length > KEY_SPACING_MAX_ROWS) {
+    keySpacingBody.removeChild(keySpacingBody.lastChild);
+  }
+}
+
+const keySpacingTracker = createKeySpacingTracker({ onSeriesClose: addKeySpacingRow });
+
 // ---- Dot Pad connection ----
 watchDotPad(sdk, DataCodes, {
   onConnected: (device) => {
@@ -314,6 +348,8 @@ watchDotPad(sdk, DataCodes, {
   onKey: (device, keyCode, msg) => {
     const byte6 = labelToByte6(msg || keyCode);
     stats.keydowns++;
+    const dotName = singleDotName(byte6);
+    if (dotName) keySpacingTracker.press(dotName);
     if (byte6 === CURSOR_DOT.LEFT) moveCursor(-1, 0);
     else if (byte6 === CURSOR_DOT.RIGHT) moveCursor(1, 0);
     else if (byte6 === CURSOR_DOT.UP) moveCursor(0, -1);
