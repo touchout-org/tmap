@@ -3319,8 +3319,41 @@ function isFormControlFocused() {
   return FORM_CONTROL_TAGS.has(focused.tagName) || focused.getAttribute('role') === 'menuitem';
 }
 
+// § Command / hotkey mapping — every hotkey below fires only on the exact
+// key combination it's assigned to. Shift is already naturally excluded
+// for letter/digit hotkeys (it changes event.key, e.g. 'i' vs 'I'), but
+// Ctrl/Alt/Meta don't change event.key at all, so a plain per-key check
+// (e.g. labelZoneKeys[event.key]) would otherwise also fire on Ctrl/Alt/
+// Meta + that key -- silently swallowing common browser/OS/AT shortcuts
+// that happen to share a letter (Ctrl+A "select all", Alt+Left "back",
+// etc.). isPlainKey()/isExactModifiers() make the "no extra modifiers
+// beyond what's assigned" check explicit and reusable, so any hotkey
+// added in the future is scoped the same way by construction rather than
+// by remembering to add the check each time.
+function isPlainKey(event) {
+  return !event.ctrlKey && !event.altKey && !event.metaKey;
+}
+function isExactModifiers(event, { ctrl = false, alt = false, meta = false, shift = false } = {}) {
+  return event.ctrlKey === ctrl && event.altKey === alt && event.metaKey === meta && event.shiftKey === shift;
+}
+
 document.addEventListener('keydown', (event) => {
   if (isFormControlFocused()) return;
+
+  // Ctrl+arrow pans (and only Ctrl+arrow -- Ctrl+Shift+arrow, Ctrl+Alt+
+  // arrow, etc. are left alone); this is checked ahead of the general
+  // "no modifiers at all" guard below since it's the one hotkey in this
+  // app that's deliberately assigned a modifier.
+  const panDirections = { ArrowUp: 'north', ArrowDown: 'south', ArrowLeft: 'west', ArrowRight: 'east' };
+  if (isExactModifiers(event, { ctrl: true }) && panDirections[event.key]) {
+    event.preventDefault();
+    panMap(panDirections[event.key]);
+    return;
+  }
+
+  // Every other hotkey below is unmodified -- bail out on any Ctrl/Alt/
+  // Meta so those combinations always reach the browser/OS/AT instead.
+  if (!isPlainKey(event)) return;
 
   // § Command / hotkey mapping — label zone toggles work regardless of
   // whether a map is loaded or the Braille Labels dialog is open (the
@@ -3374,14 +3407,6 @@ document.addEventListener('keydown', (event) => {
   if (event.key === '[' || event.key === ']') {
     event.preventDefault();
     changeScale(event.key === '[' ? 1 : -1);
-    return;
-  }
-
-  // Ctrl+arrow pans; plain arrow moves the cursor.
-  const panDirections = { ArrowUp: 'north', ArrowDown: 'south', ArrowLeft: 'west', ArrowRight: 'east' };
-  if (event.ctrlKey && panDirections[event.key]) {
-    event.preventDefault();
-    panMap(panDirections[event.key]);
     return;
   }
 
