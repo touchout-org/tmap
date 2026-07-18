@@ -7,7 +7,7 @@
 </head>
 <body>
 <h1>DotPad Cursor Performance Experiment</h1>
-<p>Fixed 60x40 tactile display, no pan or zoom. Move the cursor with the arrow keys or the Dot Pad's cursor dots (3/2/5/6 = left/up/down/right) and use the controls below to test different strategies for keeping the display responsive under rapid cursoring.</p>
+<p>Fixed 60x40 tactile display, no pan or zoom. Move the cursor with the arrow keys or the Dot Pad's cursor dots (3/2/5/6 = left/up/down/right) and use the controls below to test different strategies for keeping the display responsive under rapid cursoring, plus an experimental cursor-acceleration technique that moves further per press once several fast same-direction presses are detected.</p>
 
 <p id="browser-warning" role="alert" hidden>This App works best in Chrome. Please switch to Chrome so you can connect to the Dot Pad.</p>
 
@@ -45,16 +45,18 @@
   <button type="button" id="btn-reset-stats">Reset stats</button>
 </div>
 
-<div id="key-spacing-panel">
-  <h2>Key spacing (Dot Pad single dots only, no chords)</h2>
-  <p>For consecutive presses of the same lone dot, the mean time between presses. A different key, or a pause of 0.5s or more, closes out the current row. Most recent at top, last 10 rows kept.</p>
-  <table>
-    <thead>
-      <tr><th scope="col">Key</th><th scope="col">Mean (ms)</th><th scope="col">Values</th></tr>
-    </thead>
-    <tbody id="key-spacing-body"></tbody>
-  </table>
-</div>
+<fieldset id="accel-group">
+  <legend>Cursor acceleration (experimental)</legend>
+  <p>After this many fast same-direction presses in a row, the cursor starts moving by the acceleration factor per press instead of 1, and the reference grid hides so only the cursor's own movement is felt. A different direction, or a pause past the timeout, cancels acceleration and restores the grid. Edit a field and press Enter (in any of the four) to apply.</p>
+  <label for="input-accel-timing-threshold">Acceleration timing threshold (ms):</label>
+  <input type="number" id="input-accel-timing-threshold" min="1" step="10" value="200"><br>
+  <label for="input-accel-count-threshold">Acceleration count threshold (presses):</label>
+  <input type="number" id="input-accel-count-threshold" min="1" step="1" value="3"><br>
+  <label for="input-accel-factor">Acceleration factor (pixels per press):</label>
+  <input type="number" id="input-accel-factor" min="1" step="1" value="5"><br>
+  <label for="input-accel-timeout">Acceleration timeout (ms):</label>
+  <input type="number" id="input-accel-timeout" min="1" step="10" value="500">
+</fieldset>
 
 <script type="module" src="app.js"></script>
 </body>

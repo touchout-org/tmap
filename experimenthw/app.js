@@ -16,7 +16,6 @@ import { sendGraphicToDevice, graphicsDimensions } from '../../dotpad-toolkit/de
 import { packPixelsToHex } from '../../dotpad-toolkit/graphics/packPixelsToHex.js';
 import { drawCursorRing, drawLinePixels } from '../../dotpad-toolkit/graphics/rasterizer.js';
 import { CURSOR_DOT, labelToByte6 } from '../../dotpad-toolkit/device/keys.js';
-import { createKeySpacingTracker } from './keySpacing.js';
 
 const sdk = new DotPadSDK();
 const scanner = new DotPadScanner();
@@ -61,7 +60,10 @@ const statGap = document.getElementById('stat-gap');
 const btnResetStats = document.getElementById('btn-reset-stats');
 const inputInterval = document.getElementById('input-interval');
 const chkCoalesce = document.getElementById('chk-coalesce');
-const keySpacingBody = document.getElementById('key-spacing-body');
+const inputAccelTiming = document.getElementById('input-accel-timing-threshold');
+const inputAccelCount = document.getElementById('input-accel-count-threshold');
+const inputAccelFactor = document.getElementById('input-accel-factor');
+const inputAccelTimeout = document.getElementById('input-accel-timeout');
 
 function currentPayloadStrategy() {
   return document.querySelector('input[name="payload-strategy"]:checked').value;
@@ -118,7 +120,7 @@ function drawReferenceGrid(pixels) {
 
 function buildPixels() {
   const pixels = new Uint8Array(displayW * displayH);
-  drawReferenceGrid(pixels);
+  if (!accelActive) drawReferenceGrid(pixels);
   drawCursorRing(pixels, displayW, displayH, cursorX, cursorY);
   return pixels;
 }
@@ -253,8 +255,9 @@ function doSend() {
   renderStats();
 }
 
-// ---- Cursor movement -- shared by keyboard and Dot Pad dots, one display
-// pixel per press, no acceleration (same convention as DotTMAP). ----
+// ---- Cursor movement -- shared by keyboard and Dot Pad dots. Distance is
+// normally 1 display pixel per press; see § Cursor acceleration below for
+// how that distance can grow. ----
 function moveCursor(dx, dy) {
   const newX = Math.min(displayW - 1, Math.max(0, cursorX + dx));
   const newY = Math.min(displayH - 1, Math.max(0, cursorY + dy));
@@ -270,52 +273,105 @@ function isFormControlFocused() {
   return !!focused && FORM_CONTROL_TAGS.has(focused.tagName);
 }
 
-const CURSOR_DELTAS = {
-  ArrowLeft: [-1, 0],
-  ArrowRight: [1, 0],
-  ArrowUp: [0, -1],
-  ArrowDown: [0, 1]
-};
+// § Cursor acceleration (experimental) — a disqualifying press (too slow a
+// gap, or a different direction) always starts a brand-new streak from
+// scratch (count=1, not accelerated) rather than partially preserving
+// anything -- there's no partial credit. Once accelActive, movement is
+// accelConfig.factor pixels/press and the reference grid is hidden (see
+// buildPixels above) until a different direction or accelConfig.timeoutMs
+// of silence cancels it and restores both.
+const DIR_DELTAS = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
+
+const accelConfig = { timingThresholdMs: 200, countThreshold: 3, factor: 5, timeoutMs: 500 };
+function applyAccelConfigFromInputs() {
+  const timing = Number(inputAccelTiming.value);
+  const count = Number(inputAccelCount.value);
+  const factor = Number(inputAccelFactor.value);
+  const timeout = Number(inputAccelTimeout.value);
+  if (Number.isFinite(timing) && timing > 0) accelConfig.timingThresholdMs = timing;
+  if (Number.isInteger(count) && count > 0) accelConfig.countThreshold = count;
+  if (Number.isFinite(factor) && factor > 0) accelConfig.factor = factor;
+  if (Number.isFinite(timeout) && timeout > 0) accelConfig.timeoutMs = timeout;
+  // Reflect back the actually-applied values so a rejected/invalid entry
+  // never silently sits in a field looking applied when it wasn't.
+  inputAccelTiming.value = accelConfig.timingThresholdMs;
+  inputAccelCount.value = accelConfig.countThreshold;
+  inputAccelFactor.value = accelConfig.factor;
+  inputAccelTimeout.value = accelConfig.timeoutMs;
+}
+for (const input of [inputAccelTiming, inputAccelCount, inputAccelFactor, inputAccelTimeout]) {
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    applyAccelConfigFromInputs();
+  });
+}
+
+let accelCount = 0;
+let accelActive = false;
+let lastAccelDir = null;
+let lastAccelPressAt = 0;
+let accelWatchdog = null;
+
+function cancelAcceleration() {
+  if (accelWatchdog !== null) { clearTimeout(accelWatchdog); accelWatchdog = null; }
+  accelActive = false;
+  accelCount = 0;
+  lastAccelDir = null;
+}
+
+function armAccelWatchdog() {
+  if (accelWatchdog !== null) clearTimeout(accelWatchdog);
+  accelWatchdog = setTimeout(() => {
+    accelWatchdog = null;
+    cancelAcceleration();
+    scheduleSend(); // no further press is coming -- redraw now so the grid reappears
+  }, accelConfig.timeoutMs);
+}
+
+// Returns the pixel distance this press should move by (1 normally,
+// accelConfig.factor once accelerated).
+function onAccelDirectionPress(dir) {
+  const now = performance.now();
+
+  if (accelActive) {
+    if (dir !== lastAccelDir) {
+      cancelAcceleration(); // different direction always cancels immediately; falls through to a fresh streak below
+    } else {
+      lastAccelPressAt = now;
+      armAccelWatchdog();
+      return accelConfig.factor;
+    }
+  }
+
+  const freshStart = lastAccelDir === null || dir !== lastAccelDir || (now - lastAccelPressAt) >= accelConfig.timingThresholdMs;
+  accelCount = freshStart ? 1 : accelCount + 1;
+  lastAccelDir = dir;
+  lastAccelPressAt = now;
+
+  if (accelCount >= accelConfig.countThreshold) {
+    accelActive = true;
+    armAccelWatchdog();
+    return accelConfig.factor;
+  }
+  return 1;
+}
+
+function handleDirectionPress(dir) {
+  const distance = onAccelDirectionPress(dir);
+  const [dx, dy] = DIR_DELTAS[dir];
+  moveCursor(dx * distance, dy * distance);
+}
+
+const KEY_TO_DIR = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
 
 document.addEventListener('keydown', (event) => {
-  const delta = CURSOR_DELTAS[event.key];
-  if (!delta || isFormControlFocused()) return;
+  const dir = KEY_TO_DIR[event.key];
+  if (!dir || isFormControlFocused()) return;
   event.preventDefault();
   stats.keydowns++;
-  moveCursor(delta[0], delta[1]);
+  handleDirectionPress(dir);
 });
-
-// ---- Key spacing (single dots only, no chords) ----
-// Measures how quickly consecutive presses of the SAME lone dot are read,
-// per keySpacing.js -- see that file for the timing state machine itself.
-// Scoped to single dots specifically because a chord (multiple dots, or a
-// paddle combo) goes through the SDK's ~200ms chord-assembly debounce
-// before it's even resolved into one event; a lone dot doesn't wait for
-// that, so this is where read responsiveness should be closest to
-// real-time and most worth measuring.
-const DOT_BITS = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20]; // dot1..dot6, single bit each
-function singleDotName(byte6) {
-  const idx = DOT_BITS.indexOf(byte6);
-  return idx === -1 ? null : `dot ${idx + 1}`;
-}
-
-const KEY_SPACING_MAX_ROWS = 10;
-function addKeySpacingRow({ name, mean, count }) {
-  const row = document.createElement('tr');
-  const nameCell = document.createElement('td');
-  const meanCell = document.createElement('td');
-  const countCell = document.createElement('td');
-  nameCell.textContent = name;
-  meanCell.textContent = mean === null ? '—' : mean.toFixed(1);
-  countCell.textContent = count;
-  row.append(nameCell, meanCell, countCell);
-  keySpacingBody.insertBefore(row, keySpacingBody.firstChild);
-  while (keySpacingBody.children.length > KEY_SPACING_MAX_ROWS) {
-    keySpacingBody.removeChild(keySpacingBody.lastChild);
-  }
-}
-
-const keySpacingTracker = createKeySpacingTracker({ onSeriesClose: addKeySpacingRow });
 
 // ---- Dot Pad connection ----
 watchDotPad(sdk, DataCodes, {
@@ -348,12 +404,10 @@ watchDotPad(sdk, DataCodes, {
   onKey: (device, keyCode, msg) => {
     const byte6 = labelToByte6(msg || keyCode);
     stats.keydowns++;
-    const dotName = singleDotName(byte6);
-    if (dotName) keySpacingTracker.press(dotName);
-    if (byte6 === CURSOR_DOT.LEFT) moveCursor(-1, 0);
-    else if (byte6 === CURSOR_DOT.RIGHT) moveCursor(1, 0);
-    else if (byte6 === CURSOR_DOT.UP) moveCursor(0, -1);
-    else if (byte6 === CURSOR_DOT.DOWN) moveCursor(0, 1);
+    if (byte6 === CURSOR_DOT.LEFT) handleDirectionPress('left');
+    else if (byte6 === CURSOR_DOT.RIGHT) handleDirectionPress('right');
+    else if (byte6 === CURSOR_DOT.UP) handleDirectionPress('up');
+    else if (byte6 === CURSOR_DOT.DOWN) handleDirectionPress('down');
   }
 });
 
