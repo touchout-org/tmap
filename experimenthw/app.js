@@ -273,13 +273,16 @@ function isFormControlFocused() {
   return !!focused && FORM_CONTROL_TAGS.has(focused.tagName);
 }
 
-// § Cursor acceleration (experimental) — a disqualifying press (too slow a
-// gap, or a different direction) always starts a brand-new streak from
-// scratch (count=1, not accelerated) rather than partially preserving
-// anything -- there's no partial credit. Once accelActive, movement is
+// § Cursor acceleration (experimental) — direction never resets or cancels
+// anything; only timing does. A ramp-up press slower than
+// accelConfig.timingThresholdMs since the last one starts a brand-new
+// streak from scratch (count=1, not accelerated) regardless of which
+// direction either press was. Once accelActive, movement is
 // accelConfig.factor pixels/press and the reference grid is hidden (see
-// buildPixels above) until a different direction or accelConfig.timeoutMs
-// of silence cancels it and restores both.
+// buildPixels above); switching direction mid-acceleration keeps moving at
+// the accelerated distance in the new direction rather than interrupting
+// it -- the only thing that cancels acceleration is accelConfig.timeoutMs
+// of silence (the watchdog below), which also restores the grid.
 const DIR_DELTAS = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
 
 const accelConfig = { timingThresholdMs: 200, countThreshold: 3, factor: 5, timeoutMs: 500 };
@@ -309,15 +312,13 @@ for (const input of [inputAccelTiming, inputAccelCount, inputAccelFactor, inputA
 
 let accelCount = 0;
 let accelActive = false;
-let lastAccelDir = null;
-let lastAccelPressAt = 0;
+let lastPressAt = -Infinity;
 let accelWatchdog = null;
 
 function cancelAcceleration() {
   if (accelWatchdog !== null) { clearTimeout(accelWatchdog); accelWatchdog = null; }
   accelActive = false;
   accelCount = 0;
-  lastAccelDir = null;
 }
 
 function armAccelWatchdog() {
@@ -330,24 +331,20 @@ function armAccelWatchdog() {
 }
 
 // Returns the pixel distance this press should move by (1 normally,
-// accelConfig.factor once accelerated).
-function onAccelDirectionPress(dir) {
+// accelConfig.factor once accelerated). Direction doesn't factor into this
+// at all -- see the § Cursor acceleration comment above.
+function onCursorKeyPress() {
   const now = performance.now();
 
   if (accelActive) {
-    if (dir !== lastAccelDir) {
-      cancelAcceleration(); // different direction always cancels immediately; falls through to a fresh streak below
-    } else {
-      lastAccelPressAt = now;
-      armAccelWatchdog();
-      return accelConfig.factor;
-    }
+    lastPressAt = now;
+    armAccelWatchdog();
+    return accelConfig.factor;
   }
 
-  const freshStart = lastAccelDir === null || dir !== lastAccelDir || (now - lastAccelPressAt) >= accelConfig.timingThresholdMs;
+  const freshStart = (now - lastPressAt) >= accelConfig.timingThresholdMs;
   accelCount = freshStart ? 1 : accelCount + 1;
-  lastAccelDir = dir;
-  lastAccelPressAt = now;
+  lastPressAt = now;
 
   if (accelCount >= accelConfig.countThreshold) {
     accelActive = true;
@@ -358,7 +355,7 @@ function onAccelDirectionPress(dir) {
 }
 
 function handleDirectionPress(dir) {
-  const distance = onAccelDirectionPress(dir);
+  const distance = onCursorKeyPress();
   const [dx, dy] = DIR_DELTAS[dir];
   moveCursor(dx * distance, dy * distance);
 }

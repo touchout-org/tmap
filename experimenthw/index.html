@@ -7,7 +7,7 @@
 </head>
 <body>
 <h1>DotPad Cursor Performance Experiment</h1>
-<p>Fixed 60x40 tactile display, no pan or zoom. Move the cursor with the arrow keys or the Dot Pad's cursor dots (3/2/5/6 = left/up/down/right) and use the controls below to test different strategies for keeping the display responsive under rapid cursoring, plus an experimental cursor-acceleration technique that moves further per press once several fast same-direction presses are detected.</p>
+<p>Fixed 60x40 tactile display, no pan or zoom. Move the cursor with the arrow keys or the Dot Pad's cursor dots (3/2/5/6 = left/up/down/right) and use the controls below to test different strategies for keeping the display responsive under rapid cursoring, plus an experimental cursor-acceleration technique that moves further per press once several fast presses in a row are detected, regardless of direction.</p>
 
 <p id="browser-warning" role="alert" hidden>This App works best in Chrome. Please switch to Chrome so you can connect to the Dot Pad.</p>
 
@@ -47,7 +47,7 @@
 
 <fieldset id="accel-group">
   <legend>Cursor acceleration (experimental)</legend>
-  <p>After this many fast same-direction presses in a row, the cursor starts moving by the acceleration factor per press instead of 1, and the reference grid hides so only the cursor's own movement is felt. A different direction, or a pause past the timeout, cancels acceleration and restores the grid. Edit a field and press Enter (in any of the four) to apply.</p>
+  <p>After this many fast presses in a row (any direction), the cursor starts moving by the acceleration factor per press instead of 1, and the reference grid hides so only the cursor's own movement is felt. Switching direction does not interrupt this. Only a pause past the timeout cancels acceleration and restores the grid. Edit a field and press Enter (in any of the four) to apply.</p>
   <label for="input-accel-timing-threshold">Acceleration timing threshold (ms):</label>
   <input type="number" id="input-accel-timing-threshold" min="1" step="10" value="200"><br>
   <label for="input-accel-count-threshold">Acceleration count threshold (presses):</label>
