@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// Placeholder: deny everything, matching the "production mode" default
+// chosen when Firestore was enabled in the console. Real rules (scoped to
+// each signed-in user's own settings/saved-map documents, per the README's
+// § Accounts and Data data model) come once that code is actually written
+// -- this file exists now only so the emulator and `firebase deploy` have
+// something to read.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

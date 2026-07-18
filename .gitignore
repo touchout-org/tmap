@@ -1,0 +1,7 @@
+# Firebase emulator runtime logs -- regenerated on every emulator run,
+# never useful to commit.
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+database-debug.log
