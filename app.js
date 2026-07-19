@@ -9,7 +9,8 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.15.0/fireba
 import {
   getAuth,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   onAuthStateChanged,
   connectAuthEmulator
@@ -1610,11 +1611,19 @@ onAuthStateChanged(auth, (user) => {
   updateAuthUI(user);
 });
 
+getRedirectResult(auth)
+  .then((result) => {
+    if (result) setMessage('Signed in');
+  })
+  .catch((err) => {
+    console.error('Sign-in failed', err);
+    setMessage('Sign-in failed: ' + (err.code || err.message || 'unknown error'));
+  });
+
 btnLogin.addEventListener('click', async () => {
   closeMainMenu({ focusButton: true });
   try {
-    await signInWithPopup(auth, googleProvider);
-    setMessage('Signed in');
+    await signInWithRedirect(auth, googleProvider);
   } catch (err) {
     console.error('Sign-in failed', err);
     setMessage('Sign-in failed: ' + (err.code || err.message || 'unknown error'));
