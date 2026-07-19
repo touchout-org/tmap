@@ -9,6 +9,7 @@
 <body>
   <p id="browser-warning" role="alert" hidden>This App works best in Chrome. Please switch to Chrome so you can connect to the Dot Pad.</p>
   <p id="dev-cache-banner" role="alert" hidden>DEV MODE: using cached local test data, not live Nominatim/Overpass. Do not deploy or push with this on.</p>
+  <p id="dev-emulator-banner" role="alert" hidden>DEV MODE: using local Firebase emulators, not the live dottmap-fire project. Do not deploy or push with this on.</p>
 
   <div id="app-menu-row">
     <button type="button" id="btn-connect" autofocus>Connect Dot Pad</button>
@@ -17,9 +18,11 @@
       <ul id="main-menu" role="menu" aria-labelledby="main-menu-button" hidden>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-display-preferences">Display Preferences</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-customize-map" aria-disabled="true">Customize Map</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-my-archives" aria-disabled="true">My Archives</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-help">Help</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-download-svg" aria-disabled="true">Download SVG</button></li>
-        <!-- A "Login" item will be added here in a future update. -->
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-login">Login</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-logout" hidden>Logout</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-disconnect" hidden>Disconnect Dot Pad</button></li>
       </ul>
     </div>
@@ -93,6 +96,13 @@
       <div class="edit-map-list" id="edit-map-complexity-list"></div>
     </details>
     <button id="btn-edit-map-close" type="button">Close</button>
+  </dialog>
+
+  <dialog id="my-archives-dialog" aria-labelledby="my-archives-dialog-heading">
+    <h3 id="my-archives-dialog-heading">My Archives</h3>
+    <h4>POI History</h4>
+    <ul id="poi-history-list"></ul>
+    <button id="btn-my-archives-done" type="button">Done</button>
   </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">

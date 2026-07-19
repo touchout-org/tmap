@@ -67,9 +67,10 @@ A WAI-ARIA "Actions Menu Button" opened by the "Main Menu" button at the top of 
 
 * **"Display Preferences"** — opens the settings dialog, see [Settings](#settings). Always enabled.
 * **"Customize Map"** — opens the map-editing dialog, see [Editing the Map](#editing-the-map). Disabled (present but not activatable, `aria-disabled`, not native `disabled` — so it stays keyboard-navigable) until an anchor POI exists.
+* **"My Archives"** — opens the archives dialog, see [Saving and exporting](#saving-and-exporting). Disabled until signed in.
 * **"Help"** — opens a Help dialog documenting every hotkey/Dot Pad key combo plus a brief non-hotkey section for each dialog, see [Help](#help). Always enabled.
 * **"Download SVG"** — see [Download to Local SVG](#download-to-local-svg). Same disabled-until-anchor condition as Customize Map.
-* *(Planned, not yet built: a "Login" item for account sign-in — see [Authentication](#authentication-unimplemented) — and a "My Archives" item for cloud save/load — see [Saving and exporting](#saving-and-exporting-unimplemented).)*
+* **"Login"** / **"Logout"** — one shown at a time depending on sign-in state, same convention as Connect/Disconnect Dot Pad below. See [Authentication](#authentication).
 * **"Disconnect Dot Pad"** — only present at all while a Dot Pad is connected; entirely absent (not just disabled) while disconnected. This is the counterpart to the main-screen "Connect Dot Pad" button — the two are never both present, and Disconnect never appears on the main screen itself.
 
 "Connect Dot Pad" (from the Dot Pad SDK) lives on the main screen, not in the Main Menu, and receives keyboard focus automatically when the page first loads. It's shown only while disconnected; once connected, it's removed from the main screen entirely and "Disconnect Dot Pad" appears at the bottom of the Main Menu instead. Connecting or disconnecting reports status through the message field, per [Message display architecture](#message-display-architecture).
@@ -251,7 +252,7 @@ Braille labels can be shown on the graphics pad along the top, bottom, left, and
 
 #### Feature name compacting
 
-A general-purpose utility, not specific to braille — it also feeds the planned SVG export's per-street metadata (see [Saving and exporting](#saving-and-exporting-unimplemented)). OSM's `name` tag is consistently the fully-expanded, non-abbreviated form of a street name (confirmed empirically). Name compacting is done directly from `name` with two purpose-built lookups.
+A general-purpose utility, not specific to braille — it also feeds the planned SVG export's per-street metadata (see [Saving and exporting](#saving-and-exporting)). OSM's `name` tag is consistently the fully-expanded, non-abbreviated form of a street name (confirmed empirically). Name compacting is done directly from `name` with two purpose-built lookups.
 
 Takes a street name, returns `{ stem, type }`:
 
@@ -352,7 +353,7 @@ The dialog is organized into sub-sections, each under its own heading:
 
 ## Download to Local SVG
 
-"Download SVG" (in the [Main Menu](#main-menu)) saves the current map as a local `.svg` file, immediately, no account and no prior save required — distinct from "My Archives" (see [Saving and exporting](#saving-and-exporting-unimplemented)), which is a full cloud-backed save/load system gated behind sign-in.
+"Download SVG" (in the [Main Menu](#main-menu)) saves the current map as a local `.svg` file, immediately, no account and no prior save required — distinct from "My Archives" (see [Saving and exporting](#saving-and-exporting)), which is a full cloud-backed save/load system gated behind sign-in.
 
 ### Scope
 
@@ -389,15 +390,19 @@ Saved as `[anchor short address].svg` (sanitized for filesystem-safe characters)
 
 ## Accounts and Data
 
-### Authentication (unimplemented)
+### Authentication
 
-Use Google ID via **Firebase Authentication**, chosen specifically because it's the native path for a Google Sign-In decision already made — no separate OAuth app integration beyond what creating the Firebase project already sets up. Associate last settings and saved maps with the unique user.
+Google ID via **Firebase Authentication**, chosen specifically because it's the native path for a Google Sign-In decision already made — no separate OAuth app integration beyond what creating the Firebase project already sets up. "Login"/"Logout" in the Main Menu (Firebase SDK loaded via CDN ES modules, no bundler); My Archives is disabled until signed in.
 
-### Cloud storage (unimplemented)
+### Cloud storage
 
 **Firebase (Firestore + Firebase Authentication).** Chosen because its free "Spark" tier is permanent with no inactivity pause (some alternatives freeze a free project after a week of no database activity — a bad fit for a niche accessibility tool with sporadic usage). Fully managed, no servers to run, and its free-tier ceiling (1 GB Firestore storage, 50k reads / 20k writes / 20k deletes per day, 50k monthly active users on auth) is comfortably oversized for what this app actually stores — small per-user JSON settings and SVG map documents, light traffic.
 
-### Saving and exporting (unimplemented)
+### Saving and exporting
+
+**POI History (implemented, proof-of-concept)**: every successfully-geocoded search is logged to Firestore (`users/{uid}/poiHistory`, one document per search: name, lat, lon, timestamp) while signed in. My Archives (Main Menu) shows this as a single newest-first list with a Done button — nothing else yet. This exists to prove the Auth + Firestore read/write pipeline works before building the full feature below.
+
+**The rest of My Archives is not yet implemented:**
 
 The "My Archives" button opens a dialog with:
 
@@ -422,5 +427,5 @@ Known gaps, gathered here in one place so none get lost:
 
 * Line style (solid/dotted/dashed) for street segments — see [SVG Display Requirements](#svg-display-requirements).
 * POI distance threshold setting — see [Settings](#settings).
-* Main Menu "Login" and "My Archives" items, and the account/cloud-storage features they open onto — see [Main Menu](#main-menu), [Authentication](#authentication-unimplemented), [Saving and exporting](#saving-and-exporting-unimplemented).
+* The rest of My Archives (save, load, rename, delete, download-from-archive, unsaved-changes confirmation) — see [Saving and exporting](#saving-and-exporting). Only POI History is implemented so far.
 

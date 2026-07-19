@@ -5,6 +5,25 @@ import {
   DataCodes
 } from './web-sdk-3.0.0/DotPadSDK-3.0.0.js';
 import { translateGrade1, translateGrade2 } from './braille-ueb.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  connectAuthEmulator
+} from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  query,
+  orderBy,
+  getDocs,
+  serverTimestamp,
+  connectFirestoreEmulator
+} from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
 
 // Data sources — see tmap spec.md § Data sources
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
@@ -18,6 +37,36 @@ const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 // every deploy/push -- the dev-cache banner below exists specifically so
 // this is impossible to miss in a screenshot before pushing.
 const USE_LOCAL_TEST_DATA_CACHE = false;
+
+// § Firebase local emulator (dev-only, see README § Local development and
+// testing) — set to true while testing locally to route Auth/Firestore to
+// the local Firebase Emulator Suite (`firebase emulators:start --only
+// auth,firestore`, run from this repo's root) instead of the real
+// dottmap-fire project. MUST be false before every deploy/push -- same
+// discipline as USE_LOCAL_TEST_DATA_CACHE above, and the dev-emulator
+// banner below exists for the same reason (impossible to miss in a
+// screenshot before pushing).
+const USE_FIREBASE_EMULATORS = false;
+
+// Not secret -- Firestore/Auth access control is enforced by firestore.rules
+// and the emulator, not by hiding this. Safe to commit as-is.
+const firebaseConfig = {
+  apiKey: 'AIzaSyBBVH8u65Rwx1SKJ7eZE6b68BMjuynxPRk',
+  authDomain: 'dottmap-fire.firebaseapp.com',
+  projectId: 'dottmap-fire',
+  storageBucket: 'dottmap-fire.firebasestorage.app',
+  messagingSenderId: '236420553583',
+  appId: '1:236420553583:web:6bfa15f7f5f615b347669a'
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
+if (USE_FIREBASE_EMULATORS) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+}
+let currentUser = null;
 
 // Maps a normalized ("trim + lowercase") search query to its cached dataset
 // file under test-data/. Add an entry (and a matching file, built the same
@@ -215,6 +264,7 @@ const POI_MARKER_DOTS = 3;
 
 const browserWarning = document.getElementById('browser-warning');
 const devCacheBanner = document.getElementById('dev-cache-banner');
+const devEmulatorBanner = document.getElementById('dev-emulator-banner');
 const searchForm = document.getElementById('search-form');
 const locationLabel = document.getElementById('location-label');
 const locationInput = document.getElementById('location-input');
@@ -255,9 +305,15 @@ const editMapVisibleStreetsList = document.getElementById('edit-map-visible-stre
 const editMapHiddenFeaturesList = document.getElementById('edit-map-hidden-features-list');
 const editMapComplexityList = document.getElementById('edit-map-complexity-list');
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
+const btnMyArchives = document.getElementById('menu-my-archives');
+const myArchivesDialog = document.getElementById('my-archives-dialog');
+const poiHistoryList = document.getElementById('poi-history-list');
+const btnMyArchivesDone = document.getElementById('btn-my-archives-done');
 const btnDownloadSvg = document.getElementById('menu-download-svg');
 const btnFileIssue = document.getElementById('btn-file-issue');
 const btnSettings = document.getElementById('menu-display-preferences');
+const btnLogin = document.getElementById('menu-login');
+const btnLogout = document.getElementById('menu-logout');
 const btnDisconnect = document.getElementById('menu-disconnect');
 const settingsDialog = document.getElementById('settings-dialog');
 const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
@@ -472,6 +528,12 @@ btnConnect.focus();
 // deploy/push unnoticed.
 if (USE_LOCAL_TEST_DATA_CACHE) {
   devCacheBanner.hidden = false;
+}
+
+// § Firebase local emulator — same unmissable-banner treatment as the OSM
+// test-data cache above, for the same reason.
+if (USE_FIREBASE_EMULATORS) {
+  devEmulatorBanner.hidden = false;
 }
 
 // § Message display architecture — the physical message display's fixed
@@ -931,6 +993,29 @@ searchForm.addEventListener('submit', (event) => {
   }
 });
 
+// § My Archives — fire-and-forget: never awaited by its caller, and
+// failures are swallowed here rather than surfaced, since a history-
+// logging failure must never interrupt or slow down the actual search/map
+// flow that this app exists for. No-ops silently while signed out.
+async function logPoiToHistory(name, lat, lon) {
+  if (!currentUser) return;
+  try {
+    await addDoc(collection(db, 'users', currentUser.uid, 'poiHistory'), {
+      name,
+      lat,
+      lon,
+      searchedAt: serverTimestamp()
+    });
+  } catch (err) {
+    console.warn('poi history log failed', err);
+  }
+}
+
+// Note: this function's own `query` parameter (the search text) shadows
+// the Firestore `query()` import used elsewhere in this file (see
+// openMyArchivesDialog) -- never reference the Firestore query function by
+// name inside this function's body, it will silently resolve to the
+// string parameter instead and throw at call time.
 async function runSearch(query) {
   setMessage('Searching…');
   let place;
@@ -953,6 +1038,15 @@ async function runSearch(query) {
   const lon = parseFloat(place.lon);
   const displayName = formatPlaceName(place);
   const shortName = formatShortAddress(place);
+
+  // § My Archives — logs every successfully-geocoded search here, once,
+  // before branching into new-anchor/too-far-prompt/additional-POI paths
+  // below, so it fires exactly once per real search regardless of which
+  // path a given result takes (including one the too-far prompt is later
+  // declined for -- the search itself still succeeded). Deliberately not
+  // hooked into addAdditionalPoi/createNewAnchor instead, since those are
+  // also called from the Drop Pin dialog, which isn't a search.
+  logPoiToHistory(compactedDisplayName(shortName), lat, lon);
 
   if (!hasAnchor) {
     await createNewAnchor(displayName, shortName, lat, lon, query);
@@ -1465,6 +1559,72 @@ btnEditMap.addEventListener('click', () => {
 });
 
 btnEditMapClose.addEventListener('click', () => editMapDialog.close());
+
+// § My Archives (proof-of-concept: POI History only, see README § Saving
+// and exporting for the eventual full save/load/rename/delete feature).
+// Renders newest-first -- the query below does the sorting, this just
+// builds one plain <li> per document in the order it receives them.
+async function openMyArchivesDialog() {
+  poiHistoryList.textContent = '';
+  if (!currentUser) return; // guarded at the click handler too; defensive here as well
+  try {
+    const historyQuery = query(collection(db, 'users', currentUser.uid, 'poiHistory'), orderBy('searchedAt', 'desc'));
+    const snapshot = await getDocs(historyQuery);
+    snapshot.forEach((docSnap) => {
+      const item = document.createElement('li');
+      item.textContent = docSnap.data().name;
+      poiHistoryList.appendChild(item);
+    });
+  } catch (err) {
+    const item = document.createElement('li');
+    item.textContent = 'Could not load POI history.';
+    poiHistoryList.appendChild(item);
+  }
+  myArchivesDialog.showModal();
+}
+
+btnMyArchives.addEventListener('click', () => {
+  if (btnMyArchives.getAttribute('aria-disabled') === 'true') return;
+  closeMainMenu({ focusButton: true });
+  openMyArchivesDialog();
+});
+
+btnMyArchivesDone.addEventListener('click', () => myArchivesDialog.close());
+
+// § Authentication — Google Sign-In via Firebase Authentication (see
+// README § Authentication). Login/Logout follow the same shown-XOR-hidden
+// convention as the existing Connect/Disconnect Dot Pad pair in this same
+// menu, rather than one toggling label.
+function updateAuthUI(user) {
+  btnLogin.hidden = !!user;
+  btnLogout.hidden = !user;
+  if (user) {
+    btnMyArchives.removeAttribute('aria-disabled');
+  } else {
+    btnMyArchives.setAttribute('aria-disabled', 'true');
+  }
+}
+
+onAuthStateChanged(auth, (user) => {
+  currentUser = user;
+  updateAuthUI(user);
+});
+
+btnLogin.addEventListener('click', async () => {
+  closeMainMenu({ focusButton: true });
+  try {
+    await signInWithPopup(auth, googleProvider);
+    setMessage('Signed in');
+  } catch (err) {
+    setMessage('Sign-in failed');
+  }
+});
+
+btnLogout.addEventListener('click', async () => {
+  closeMainMenu({ focusButton: true });
+  await signOut(auth);
+  setMessage('Signed out');
+});
 
 // Centers the view exactly on (lat, lon) and moves the cursor there too --
 // used for panning to a POI (newly added, or selected from the list), as
