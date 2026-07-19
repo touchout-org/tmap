@@ -424,6 +424,7 @@ Both sections show a sign-in prompt in place of their table content while signed
 Known gaps, gathered here in one place so none get lost:
 
 * Line style (solid/dotted/dashed) for street segments — see [SVG Display Requirements](#svg-display-requirements).
-* POI distance threshold setting — see [Settings](#settings).
+* POI distance threshold setting (currently a fixed constant, not user-adjustable) — see [Settings](#settings).
 * Download-from-archive and an unsaved-changes confirmation when loading over unsaved edits — see [Saving and exporting](#saving-and-exporting). Save/load/rename/delete are implemented; these two are not yet.
+* liblouis's "short-form words" braille contraction category (several hundred common whole-word contractions, e.g. "about," "said," "your") — see [Braille translator](#braille-translator). Everything else from liblouis's UEB Grade 2 table that this app's plain message text needs is already included.
 
