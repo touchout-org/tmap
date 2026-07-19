@@ -17,9 +17,13 @@ import {
 import {
   getFirestore,
   collection,
+  doc,
   addDoc,
+  updateDoc,
+  deleteDoc,
   query,
   orderBy,
+  limit,
   getDocs,
   serverTimestamp,
   connectFirestoreEmulator
@@ -307,8 +311,25 @@ const editMapComplexityList = document.getElementById('edit-map-complexity-list'
 const btnEditMapClose = document.getElementById('btn-edit-map-close');
 const btnMyArchives = document.getElementById('menu-my-archives');
 const myArchivesDialog = document.getElementById('my-archives-dialog');
-const poiHistoryList = document.getElementById('poi-history-list');
 const btnMyArchivesDone = document.getElementById('btn-my-archives-done');
+const recentMapsBody = document.getElementById('recent-maps-body');
+const btnClearHistory = document.getElementById('btn-clear-history');
+const savedMapsBody = document.getElementById('saved-maps-body');
+const savedMapsSortDate = document.getElementById('saved-maps-sort-date');
+const savedMapsSortName = document.getElementById('saved-maps-sort-name');
+const btnSaveCurrentMap = document.getElementById('btn-save-current-map');
+const rowActionsMenu = document.getElementById('row-actions-menu');
+const rowActionsEdit = document.getElementById('row-actions-edit');
+const rowActionsDelete = document.getElementById('row-actions-delete');
+const saveMapDialog = document.getElementById('save-map-dialog');
+const saveMapForm = document.getElementById('save-map-form');
+const saveMapNameInput = document.getElementById('save-map-name');
+const saveMapNotesInput = document.getElementById('save-map-notes');
+const btnSaveMapCancel = document.getElementById('btn-save-map-cancel');
+const deleteSavedMapDialog = document.getElementById('delete-saved-map-dialog');
+const deleteSavedMapMessage = document.getElementById('delete-saved-map-message');
+const btnDeleteSavedMapYes = document.getElementById('btn-delete-saved-map-yes');
+const btnDeleteSavedMapCancel = document.getElementById('btn-delete-saved-map-cancel');
 const btnDownloadSvg = document.getElementById('menu-download-svg');
 const btnFileIssue = document.getElementById('btn-file-issue');
 const btnSettings = document.getElementById('menu-display-preferences');
@@ -356,6 +377,12 @@ let lastWays = [];
 let lastAnchorLat = null;
 let lastAnchorLon = null;
 let lastAnchorName = null;
+
+// § My Archives — the raw search text that produced the current anchor.
+// Never part of the real Overpass query (see fetchWays) -- stored only so
+// the local Overpass/Nominatim test-data cache still matches when a
+// developer tests loading a Recent/Saved map locally.
+let lastSearchQuery = null;
 
 // § Scale behavior / § Pan Behavior — the viewport is the sub-window of the
 // fetched data (lastBbox) actually shown at the current scale. Center starts
@@ -504,6 +531,60 @@ const cursorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'circle
 cursorSvg.setAttribute('class', 'cursor');
 cursorSvg.setAttribute('r', CURSOR_SVG_RADIUS);
 cursorSvg.hidden = true;
+
+// § My Archives — captures everything needed to push the current map into
+// Map History or Saved Maps. Deliberately excludes display preferences
+// (braille translation, label zones, scale, map complexity, cursor-only
+// mode) -- those aren't map data. Street/way geometry is excluded too;
+// only which streets are hidden is kept, since geometry is always
+// re-fetched live from Overpass on load (see loadMapRecord), matching
+// this app's live-data approach elsewhere.
+function captureCurrentMap() {
+  return {
+    anchorName: lastAnchorName,
+    anchorLat: lastAnchorLat,
+    anchorLon: lastAnchorLon,
+    searchQuery: lastSearchQuery,
+    additionalPois: additionalPois.map((poi) => ({ ...poi })),
+    hiddenPoiNames: [...hiddenPoiNames],
+    hiddenStreetNames: [...hiddenStreetNames],
+    viewportCenterLat,
+    viewportCenterLon
+  };
+}
+
+// § My Archives — the current map lives locally (independent of sign-in)
+// until it's replaced by a new one (see archiveOutgoingMapIfNeeded) or
+// explicitly saved (see saveCurrentMapAs). Persisted so a page reload
+// doesn't lose an in-progress map. Follows the same try/catch-swallowed,
+// field-validated convention as loadPersistedSettings/savePersistedSettings
+// above.
+const CURRENT_MAP_STORAGE_KEY = 'dottmap-current-map';
+
+function saveCurrentMapLocally() {
+  if (!hasAnchor) return;
+  try {
+    localStorage.setItem(CURRENT_MAP_STORAGE_KEY, JSON.stringify({
+      ...captureCurrentMap(),
+      updatedAt: new Date().toISOString()
+    }));
+  } catch (err) {
+    // Ignored -- see savePersistedSettings above.
+  }
+}
+
+function loadPersistedCurrentMap() {
+  try {
+    const raw = localStorage.getItem(CURRENT_MAP_STORAGE_KEY);
+    if (!raw) return null;
+    const stored = JSON.parse(raw);
+    if (!stored || typeof stored !== 'object') return null;
+    if (typeof stored.anchorName !== 'string' || typeof stored.anchorLat !== 'number' || typeof stored.anchorLon !== 'number') return null;
+    return stored;
+  } catch (err) {
+    return null;
+  }
+}
 
 // § Browser check
 function isChrome() {
@@ -993,24 +1074,6 @@ searchForm.addEventListener('submit', (event) => {
   }
 });
 
-// § My Archives — fire-and-forget: never awaited by its caller, and
-// failures are swallowed here rather than surfaced, since a history-
-// logging failure must never interrupt or slow down the actual search/map
-// flow that this app exists for. No-ops silently while signed out.
-async function logPoiToHistory(name, lat, lon) {
-  if (!currentUser) return;
-  try {
-    await addDoc(collection(db, 'users', currentUser.uid, 'poiHistory'), {
-      name,
-      lat,
-      lon,
-      searchedAt: serverTimestamp()
-    });
-  } catch (err) {
-    console.warn('poi history log failed', err);
-  }
-}
-
 // Note: this function's own `query` parameter (the search text) shadows
 // the Firestore `query()` import used elsewhere in this file (see
 // openMyArchivesDialog) -- never reference the Firestore query function by
@@ -1038,15 +1101,6 @@ async function runSearch(query) {
   const lon = parseFloat(place.lon);
   const displayName = formatPlaceName(place);
   const shortName = formatShortAddress(place);
-
-  // § My Archives — logs every successfully-geocoded search here, once,
-  // before branching into new-anchor/too-far-prompt/additional-POI paths
-  // below, so it fires exactly once per real search regardless of which
-  // path a given result takes (including one the too-far prompt is later
-  // declined for -- the search itself still succeeded). Deliberately not
-  // hooked into addAdditionalPoi/createNewAnchor instead, since those are
-  // also called from the Drop Pin dialog, which isn't a search.
-  logPoiToHistory(compactedDisplayName(shortName), lat, lon);
 
   if (!hasAnchor) {
     await createNewAnchor(displayName, shortName, lat, lon, query);
@@ -1084,9 +1138,107 @@ async function createNewAnchor(displayName, shortName, lat, lon, query) {
     setMessage('Streets failed');
     return;
   }
+  // § My Archives — the map about to be discarded gets archived to Map
+  // History before any state is overwritten below (fire-and-forget, never
+  // blocks the new search -- see archiveOutgoingMapIfNeeded).
+  archiveOutgoingMapIfNeeded();
+  lastSearchQuery = query;
   additionalPois = [];
   showAnchor(displayName, shortName, lat, lon, bbox, ways);
   renderPoiList();
+  saveCurrentMapLocally();
+}
+
+// § My Archives — shared by loading a Recent Maps entry, loading a Saved
+// Maps entry, and restoring the current map from local storage on
+// startup. The map being replaced is archived first, same as
+// createNewAnchor (the current map is only ever exempt from archiving
+// when there wasn't one yet -- see archiveOutgoingMapIfNeeded's !hasAnchor
+// guard, which correctly no-ops on the very first page load). The record
+// being loaded, on the other hand, never itself touches Map History or
+// Saved Maps just by being loaded -- only restores additionalPois/
+// hiddenPoiNames/hiddenStreetNames/viewport instead of resetting them.
+// Complexity/cursor-only/scale/braille aren't part of a record, so they
+// come out exactly as showAnchor's normal reset leaves them -- correct,
+// since those are display preferences, not map data.
+async function loadMapRecord(record) {
+  const bbox = squareBoundingBox(record.anchorLat, record.anchorLon, POI_DISTANCE_THRESHOLD_MILES);
+  let ways;
+  try {
+    ways = await fetchWays(bbox, record.searchQuery);
+  } catch (err) {
+    setMessage('Streets failed');
+    return;
+  }
+  archiveOutgoingMapIfNeeded();
+  lastSearchQuery = record.searchQuery || null;
+  showAnchor(record.anchorName, record.anchorName, record.anchorLat, record.anchorLon, bbox, ways);
+  additionalPois = (record.additionalPois || []).map((poi) => ({ ...poi }));
+  hiddenPoiNames = new Set(record.hiddenPoiNames || []);
+  hiddenStreetNames = new Set(record.hiddenStreetNames || []);
+  if (typeof record.viewportCenterLat === 'number' && typeof record.viewportCenterLon === 'number') {
+    viewportCenterLat = record.viewportCenterLat;
+    viewportCenterLon = record.viewportCenterLon;
+  }
+  renderPoiList();
+  refreshMap();
+  saveCurrentMapLocally();
+}
+
+// § My Archives — deep-equality check between two captureCurrentMap()-
+// shaped records (ignoring metadata like updatedAt/doc id), used to decide
+// whether replacing the current map is genuinely a new map or just the
+// same location searched again (see archiveOutgoingMapIfNeeded).
+function isSameMap(a, b) {
+  const normalize = (m) => JSON.stringify({
+    anchorName: m.anchorName,
+    anchorLat: m.anchorLat,
+    anchorLon: m.anchorLon,
+    additionalPois: m.additionalPois,
+    hiddenPoiNames: [...(m.hiddenPoiNames || [])].sort(),
+    hiddenStreetNames: [...(m.hiddenStreetNames || [])].sort(),
+    viewportCenterLat: m.viewportCenterLat,
+    viewportCenterLon: m.viewportCenterLon
+  });
+  return normalize(a) === normalize(b);
+}
+
+// § My Archives — Map History cap; called after every append so the
+// collection never grows past RECENT_MAPS_LIMIT. Firestore has no
+// built-in cap, so this is enforced client-side: fetch newest-first,
+// delete anything past the limit.
+const RECENT_MAPS_LIMIT = 10;
+
+async function pruneRecentMaps() {
+  const historyRef = collection(db, 'users', currentUser.uid, 'recentMaps');
+  const snapshot = await getDocs(query(historyRef, orderBy('updatedAt', 'desc')));
+  const overflow = snapshot.docs.slice(RECENT_MAPS_LIMIT);
+  await Promise.all(overflow.map((docSnap) => deleteDoc(docSnap.ref)));
+}
+
+// § My Archives — the current map is only archived to Map History at the
+// moment it's about to be replaced by a genuinely new one (see
+// createNewAnchor). Fire-and-forget: an archiving failure must never
+// block the new search. No-ops silently
+// while signed out or when there's no outgoing map yet (the very first
+// search). If the outgoing map is identical to the top of the existing
+// history (e.g. the same location searched again), only that entry's
+// timestamp is refreshed rather than creating a duplicate.
+async function archiveOutgoingMapIfNeeded() {
+  if (!hasAnchor || !currentUser) return;
+  try {
+    const outgoing = captureCurrentMap();
+    const historyRef = collection(db, 'users', currentUser.uid, 'recentMaps');
+    const topSnap = await getDocs(query(historyRef, orderBy('updatedAt', 'desc'), limit(1)));
+    if (!topSnap.empty && isSameMap(topSnap.docs[0].data(), outgoing)) {
+      await updateDoc(topSnap.docs[0].ref, { updatedAt: serverTimestamp() });
+      return;
+    }
+    await addDoc(historyRef, { ...outgoing, updatedAt: serverTimestamp() });
+    await pruneRecentMaps();
+  } catch (err) {
+    console.warn('map history archive failed', err);
+  }
 }
 
 // § Additional POIs — "The new location is [distance] away from [anchor
@@ -1120,6 +1272,7 @@ function addAdditionalPoi(shortName, lat, lon) {
   additionalPois.push({ name: compactedDisplayName(shortName), lat, lon });
   renderPoiList();
   panToPoint(lat, lon);
+  saveCurrentMapLocally();
 }
 
 // § Drop Pin — dots-to-feet conversion at the current Scale, used to turn
@@ -1461,6 +1614,7 @@ function handlePoiButtonClick(event) {
   refreshMap();
   setMessage(`${name} removed`);
   focusAfterEditMapToggle(editMapPoisList, sourceIndex, editMapHiddenFeaturesList, name);
+  saveCurrentMapLocally();
 }
 
 editMapPoisList.addEventListener('click', handlePoiButtonClick);
@@ -1479,6 +1633,7 @@ function handleVisibleStreetButtonClick(event) {
   refreshMap();
   setMessage(`${name} removed`);
   focusAfterEditMapToggle(editMapVisibleStreetsList, sourceIndex, editMapHiddenFeaturesList, name);
+  saveCurrentMapLocally();
 }
 
 editMapVisibleStreetsList.addEventListener('click', handleVisibleStreetButtonClick);
@@ -1505,6 +1660,7 @@ function handleHiddenFeatureButtonClick(event) {
   setMessage(`${name} restored`);
   const destList = kind === 'poi' ? editMapPoisList : editMapVisibleStreetsList;
   focusAfterEditMapToggle(editMapHiddenFeaturesList, sourceIndex, destList, name);
+  saveCurrentMapLocally();
 }
 
 editMapHiddenFeaturesList.addEventListener('click', handleHiddenFeatureButtonClick);
@@ -1560,49 +1716,403 @@ btnEditMap.addEventListener('click', () => {
 
 btnEditMapClose.addEventListener('click', () => editMapDialog.close());
 
-// § My Archives (proof-of-concept: POI History only, see README § Saving
-// and exporting for the eventual full save/load/rename/delete feature).
-// Renders newest-first -- the query below does the sorting, this just
-// builds one plain <li> per document in the order it receives them.
-async function openMyArchivesDialog() {
-  poiHistoryList.textContent = '';
-  if (!currentUser) return; // guarded at the click handler too; defensive here as well
+// § My Archives — "local, concise" date/time formatting shared by Recent
+// Maps and Saved Maps (e.g. "Jan 21, 2026, 14:45"). Uses the Date object's
+// own local-time getters, so this always reflects the viewer's own clock.
+const MONTH_ABBREVIATIONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatDateTime(date) {
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${MONTH_ABBREVIATIONS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}, ${hh}:${mm}`;
+}
+
+function poiCountFor(record) {
+  return (record.additionalPois || []).length + 1;
+}
+
+function hiddenCountFor(record) {
+  return (record.hiddenPoiNames || []).length + (record.hiddenStreetNames || []).length;
+}
+
+// § My Archives — Saved Maps CRUD. name/notes are user-editable; the map
+// data itself is a frozen snapshot from the moment of saving (loading a
+// saved map, or later changing the current map, never writes back to it).
+async function saveCurrentMapAs(name, notes) {
+  await addDoc(collection(db, 'users', currentUser.uid, 'savedMaps'), {
+    ...captureCurrentMap(),
+    name,
+    notes,
+    savedAt: serverTimestamp()
+  });
+}
+
+async function updateSavedMapNameNotes(docId, name, notes) {
+  await updateDoc(doc(db, 'users', currentUser.uid, 'savedMaps', docId), { name, notes });
+}
+
+async function deleteSavedMap(docId) {
+  await deleteDoc(doc(db, 'users', currentUser.uid, 'savedMaps', docId));
+}
+
+// § My Archives — empties Map History only; Saved Maps is a separate
+// collection and untouched.
+async function clearRecentMapsHistory() {
+  const snapshot = await getDocs(collection(db, 'users', currentUser.uid, 'recentMaps'));
+  await Promise.all(snapshot.docs.map((docSnap) => deleteDoc(docSnap.ref)));
+}
+
+// § My Archives — the top row of Recent Maps is synthesized live from the
+// current (local-only) map rather than a Firestore document -- there's
+// nothing useful to "load" since it's already showing, so unlike the rows
+// below it, this one is plain text, not a link.
+function buildCurrentMapRow() {
+  const tr = document.createElement('tr');
+  const nameTd = document.createElement('td');
+  const dateTd = document.createElement('td');
+  const poisTd = document.createElement('td');
+  const hiddenTd = document.createElement('td');
+  if (hasAnchor) {
+    nameTd.textContent = `${lastAnchorName} (current)`;
+    const local = loadPersistedCurrentMap();
+    dateTd.textContent = local && local.updatedAt ? formatDateTime(new Date(local.updatedAt)) : '';
+    poisTd.textContent = String(allPois().length);
+    hiddenTd.textContent = String(hiddenPoiNames.size + hiddenStreetNames.size);
+  } else {
+    nameTd.textContent = '(no current map)';
+  }
+  tr.append(nameTd, dateTd, poisTd, hiddenTd);
+  return tr;
+}
+
+function buildEmptyRow(colSpan, text) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = colSpan;
+  td.textContent = text;
+  tr.appendChild(td);
+  return tr;
+}
+
+async function renderRecentMapsSection() {
+  recentMapsBody.textContent = '';
+  recentMapsBody.appendChild(buildCurrentMapRow());
+  if (!currentUser) {
+    recentMapsBody.appendChild(buildEmptyRow(4, 'Sign in to keep a history of past maps.'));
+    btnClearHistory.hidden = true;
+    return;
+  }
+  btnClearHistory.hidden = false;
   try {
-    const historyQuery = query(collection(db, 'users', currentUser.uid, 'poiHistory'), orderBy('searchedAt', 'desc'));
+    const historyQuery = query(collection(db, 'users', currentUser.uid, 'recentMaps'), orderBy('updatedAt', 'desc'));
     const snapshot = await getDocs(historyQuery);
     snapshot.forEach((docSnap) => {
-      const item = document.createElement('li');
-      item.textContent = docSnap.data().name;
-      poiHistoryList.appendChild(item);
+      const record = docSnap.data();
+      const tr = document.createElement('tr');
+      const nameTd = document.createElement('td');
+      const nameBtn = document.createElement('button');
+      nameBtn.type = 'button';
+      nameBtn.textContent = record.anchorName;
+      nameBtn.addEventListener('click', () => {
+        myArchivesDialog.close();
+        loadMapRecord(record);
+      });
+      nameTd.appendChild(nameBtn);
+      const dateTd = document.createElement('td');
+      dateTd.textContent = record.updatedAt ? formatDateTime(record.updatedAt.toDate()) : '';
+      const poisTd = document.createElement('td');
+      poisTd.textContent = String(poiCountFor(record));
+      const hiddenTd = document.createElement('td');
+      hiddenTd.textContent = String(hiddenCountFor(record));
+      tr.append(nameTd, dateTd, poisTd, hiddenTd);
+      recentMapsBody.appendChild(tr);
     });
   } catch (err) {
-    const item = document.createElement('li');
-    item.textContent = 'Could not load POI history.';
-    poiHistoryList.appendChild(item);
+    recentMapsBody.appendChild(buildEmptyRow(4, 'Could not load Map History.'));
   }
+}
+
+// § My Archives — fetched once per dialog open, re-sorted client-side by
+// the sort radio buttons (no need for a second Firestore query).
+let savedMapsCache = [];
+
+function sortedSavedMaps() {
+  const sorted = [...savedMapsCache];
+  if (savedMapsSortName.checked) {
+    sorted.sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    sorted.sort((a, b) => (b.savedAt ? b.savedAt.toMillis() : 0) - (a.savedAt ? a.savedAt.toMillis() : 0));
+  }
+  return sorted;
+}
+
+function renderSavedMapsTable() {
+  savedMapsBody.textContent = '';
+  if (!currentUser) {
+    savedMapsBody.appendChild(buildEmptyRow(6, 'Sign in to save and view your saved maps.'));
+    return;
+  }
+  if (savedMapsCache.length === 0) {
+    savedMapsBody.appendChild(buildEmptyRow(6, 'No saved maps yet.'));
+    return;
+  }
+  sortedSavedMaps().forEach((record) => {
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    const nameBtn = document.createElement('button');
+    nameBtn.type = 'button';
+    nameBtn.textContent = record.name;
+    nameBtn.addEventListener('click', () => {
+      myArchivesDialog.close();
+      loadMapRecord(record);
+    });
+    nameTd.appendChild(nameBtn);
+    const dateTd = document.createElement('td');
+    dateTd.textContent = record.savedAt ? formatDateTime(record.savedAt.toDate()) : '';
+    const poisTd = document.createElement('td');
+    poisTd.textContent = String(poiCountFor(record));
+    const hiddenTd = document.createElement('td');
+    hiddenTd.textContent = String(hiddenCountFor(record));
+    const notesTd = document.createElement('td');
+    notesTd.textContent = record.notes || '';
+    const actionsTd = document.createElement('td');
+    const actionsBtn = document.createElement('button');
+    actionsBtn.type = 'button';
+    actionsBtn.className = 'row-actions-button';
+    actionsBtn.textContent = 'Actions';
+    actionsBtn.setAttribute('aria-haspopup', 'true');
+    actionsBtn.setAttribute('aria-expanded', 'false');
+    actionsBtn.addEventListener('click', () => openRowActionsMenu(actionsBtn, record));
+    actionsTd.appendChild(actionsBtn);
+    tr.append(nameTd, dateTd, poisTd, hiddenTd, notesTd, actionsTd);
+    savedMapsBody.appendChild(tr);
+  });
+}
+
+async function refreshSavedMapsSection() {
+  btnSaveCurrentMap.hidden = !currentUser;
+  if (currentUser) {
+    if (hasAnchor) btnSaveCurrentMap.removeAttribute('aria-disabled');
+    else btnSaveCurrentMap.setAttribute('aria-disabled', 'true');
+  }
+  if (!currentUser) {
+    savedMapsCache = [];
+    renderSavedMapsTable();
+    return;
+  }
+  try {
+    const snapshot = await getDocs(collection(db, 'users', currentUser.uid, 'savedMaps'));
+    savedMapsCache = snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+  } catch (err) {
+    savedMapsCache = [];
+  }
+  renderSavedMapsTable();
+}
+
+async function openMyArchivesDialog() {
+  await Promise.all([renderRecentMapsSection(), refreshSavedMapsSection()]);
   myArchivesDialog.showModal();
 }
 
 btnMyArchives.addEventListener('click', () => {
-  if (btnMyArchives.getAttribute('aria-disabled') === 'true') return;
   closeMainMenu({ focusButton: true });
   openMyArchivesDialog();
 });
 
 btnMyArchivesDone.addEventListener('click', () => myArchivesDialog.close());
 
+btnClearHistory.addEventListener('click', async () => {
+  if (!currentUser) return;
+  try {
+    await clearRecentMapsHistory();
+  } catch (err) {
+    console.error('clear history failed', err);
+    setMessage('Clear History failed');
+  }
+  renderRecentMapsSection();
+});
+
+savedMapsSortDate.addEventListener('change', () => renderSavedMapsTable());
+savedMapsSortName.addEventListener('change', () => renderSavedMapsTable());
+
+// § My Archives — Save Map dialog is shared by "Save Current Map" (create)
+// and the Actions menu's "Edit name/notes" (update) -- editingSavedMapId
+// distinguishes the two on submit. Since it's opened from within My
+// Archives, that dialog closes first (native <dialog> supports stacked
+// modals, but this app shows one at a time everywhere else) and reopens,
+// refreshed, once this one is dismissed either way.
+let editingSavedMapId = null;
+
+async function reopenMyArchivesDialog() {
+  await Promise.all([renderRecentMapsSection(), refreshSavedMapsSection()]);
+  myArchivesDialog.showModal();
+}
+
+function openSaveMapDialog() {
+  editingSavedMapId = null;
+  saveMapNameInput.value = lastAnchorName || '';
+  saveMapNotesInput.value = '';
+  myArchivesDialog.close();
+  saveMapDialog.showModal();
+}
+
+function openEditSavedMapDialog(record) {
+  editingSavedMapId = record.id;
+  saveMapNameInput.value = record.name || '';
+  saveMapNotesInput.value = record.notes || '';
+  myArchivesDialog.close();
+  saveMapDialog.showModal();
+}
+
+btnSaveCurrentMap.addEventListener('click', () => {
+  if (btnSaveCurrentMap.getAttribute('aria-disabled') === 'true') return;
+  openSaveMapDialog();
+});
+
+saveMapForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const name = saveMapNameInput.value.trim();
+  if (!name) return;
+  const notes = saveMapNotesInput.value.trim();
+  try {
+    if (editingSavedMapId) {
+      await updateSavedMapNameNotes(editingSavedMapId, name, notes);
+    } else {
+      await saveCurrentMapAs(name, notes);
+    }
+  } catch (err) {
+    console.error('save map failed', err);
+    setMessage('Save failed');
+  }
+  saveMapDialog.close();
+  reopenMyArchivesDialog();
+});
+
+btnSaveMapCancel.addEventListener('click', () => {
+  saveMapDialog.close();
+  reopenMyArchivesDialog();
+});
+
+// § My Archives — Delete confirmation, same open-close-reopen dance as the
+// Save Map dialog above.
+let deletingSavedMapId = null;
+
+function openDeleteSavedMapDialog(record) {
+  deletingSavedMapId = record.id;
+  deleteSavedMapMessage.textContent = `Are you sure you want to delete ${record.name} from your saved maps?`;
+  myArchivesDialog.close();
+  deleteSavedMapDialog.showModal();
+}
+
+btnDeleteSavedMapYes.addEventListener('click', async () => {
+  const id = deletingSavedMapId;
+  deletingSavedMapId = null;
+  deleteSavedMapDialog.close();
+  if (id) {
+    try {
+      await deleteSavedMap(id);
+    } catch (err) {
+      console.error('delete saved map failed', err);
+      setMessage('Delete failed');
+    }
+  }
+  reopenMyArchivesDialog();
+});
+
+btnDeleteSavedMapCancel.addEventListener('click', () => {
+  deletingSavedMapId = null;
+  deleteSavedMapDialog.close();
+  reopenMyArchivesDialog();
+});
+
+// § My Archives — a single shared Actions popup menu, repositioned per row
+// via getBoundingClientRect, rather than one menu widget per row (Saved
+// Maps has no row limit). Open/close/keyboard-nav mirrors the Main Menu
+// pattern above (openMainMenu/closeMainMenu/focusMainMenuItem).
+let rowActionsTarget = null;
+let rowActionsTriggerButton = null;
+
+function rowActionsItems() {
+  return [rowActionsEdit, rowActionsDelete];
+}
+
+function focusRowActionsItem(index) {
+  const items = rowActionsItems();
+  items.forEach((item, i) => item.setAttribute('tabindex', i === index ? '0' : '-1'));
+  items[index].focus();
+}
+
+function openRowActionsMenu(triggerButton, record) {
+  rowActionsTarget = record;
+  rowActionsTriggerButton = triggerButton;
+  triggerButton.setAttribute('aria-expanded', 'true');
+  const rect = triggerButton.getBoundingClientRect();
+  rowActionsMenu.style.top = `${rect.bottom}px`;
+  rowActionsMenu.style.left = `${rect.left}px`;
+  rowActionsMenu.hidden = false;
+  focusRowActionsItem(0);
+}
+
+function closeRowActionsMenu({ focusTrigger = false } = {}) {
+  if (rowActionsMenu.hidden) return;
+  rowActionsMenu.hidden = true;
+  if (rowActionsTriggerButton) {
+    rowActionsTriggerButton.setAttribute('aria-expanded', 'false');
+    if (focusTrigger) rowActionsTriggerButton.focus();
+  }
+  rowActionsTarget = null;
+  rowActionsTriggerButton = null;
+}
+
+rowActionsItems().forEach((item) => {
+  item.addEventListener('keydown', (event) => {
+    const items = rowActionsItems();
+    const index = items.indexOf(item);
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      focusRowActionsItem((index + 1) % items.length);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      focusRowActionsItem((index - 1 + items.length) % items.length);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeRowActionsMenu({ focusTrigger: true });
+    } else if (event.key === 'Tab') {
+      closeRowActionsMenu();
+    }
+  });
+});
+
+rowActionsEdit.addEventListener('click', () => {
+  const record = rowActionsTarget;
+  closeRowActionsMenu();
+  if (record) openEditSavedMapDialog(record);
+});
+
+rowActionsDelete.addEventListener('click', () => {
+  const record = rowActionsTarget;
+  closeRowActionsMenu();
+  if (record) openDeleteSavedMapDialog(record);
+});
+
+document.addEventListener('click', (event) => {
+  if (!rowActionsMenu.hidden && !event.target.closest('#row-actions-menu') && !event.target.closest('.row-actions-button')) {
+    closeRowActionsMenu();
+  }
+});
+
 // § Authentication — Google Sign-In via Firebase Authentication (see
 // README § Authentication). Login/Logout follow the same shown-XOR-hidden
 // convention as the existing Connect/Disconnect Dot Pad pair in this same
-// menu, rather than one toggling label.
+// menu, rather than one toggling label. My Archives itself is available
+// signed out too (the current-map row in Recent Maps is local-only) --
+// only the Firestore-backed history/saved sections require sign-in, see
+// renderRecentMapsSection/refreshSavedMapsSection.
 function updateAuthUI(user) {
   btnLogin.hidden = !!user;
   btnLogout.hidden = !user;
   if (user) {
     btnLogout.textContent = `Logged in as ${user.displayName || user.email} — logout`;
-    btnMyArchives.removeAttribute('aria-disabled');
-  } else {
-    btnMyArchives.setAttribute('aria-disabled', 'true');
   }
 }
 
@@ -3987,3 +4497,9 @@ sdk.setCallBack(
     else if (byte6 === 0x07) showPreviousMessageChunk();  // dots 1+2+3
   }
 );
+
+// § My Archives — restore the current map from local storage on startup,
+// if one exists, so a page reload doesn't lose an in-progress map. Uses
+// the same restore path as loading a Recent/Saved Maps entry.
+const persistedCurrentMap = loadPersistedCurrentMap();
+if (persistedCurrentMap) loadMapRecord(persistedCurrentMap);

@@ -219,11 +219,109 @@ body {
 #settings-dialog,
 #poi-too-far-dialog,
 #edit-map-dialog,
-#custom-poi-dialog {
+#custom-poi-dialog,
+#save-map-dialog,
+#delete-saved-map-dialog {
   border: 1px solid #999;
   border-radius: 4px;
   padding: 1rem 1.25rem;
   max-width: 24rem;
+}
+
+/* § My Archives — two tables plus a Save Map dialog worth of content, so
+   it gets the same wider, scrollable treatment as Help rather than the
+   24rem dialogs above. */
+#my-archives-dialog {
+  border: 1px solid #999;
+  border-radius: 4px;
+  padding: 1rem 1.25rem;
+  max-width: 42rem;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+#my-archives-dialog table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0 1rem;
+}
+
+#my-archives-dialog th,
+#my-archives-dialog td {
+  border: 1px solid #ccc;
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+
+#my-archives-dialog table button {
+  font: inherit;
+}
+
+#saved-maps-sort {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+
+#saved-maps-sort legend {
+  font-weight: bold;
+  padding: 0;
+}
+
+/* § My Archives — a single shared Actions popup menu, repositioned per row
+   (see openRowActionsMenu in app.js) rather than one menu widget per row.
+   Same look as #main-menu, but position: fixed since it's placed via
+   getBoundingClientRect viewport coordinates, not relative to a
+   same-sized parent. */
+#row-actions-menu {
+  position: fixed;
+  z-index: 2;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid #999;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  min-width: 10rem;
+}
+
+#row-actions-menu li {
+  margin: 0;
+}
+
+#row-actions-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: none;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+#row-actions-menu button:hover,
+#row-actions-menu button:focus {
+  background: Highlight;
+  color: HighlightText;
+  outline: none;
+}
+
+#save-map-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+#save-map-name,
+#save-map-notes {
+  width: 100%;
 }
 
 /* § Help — much richer content (several tables) than the other dialogs, so

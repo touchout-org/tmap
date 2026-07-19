@@ -18,7 +18,7 @@
       <ul id="main-menu" role="menu" aria-labelledby="main-menu-button" hidden>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-display-preferences">Display Preferences…</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-customize-map" aria-disabled="true">Customize Map…</button></li>
-        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-my-archives" aria-disabled="true">My Archives…</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-my-archives">My Archives…</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-help">Help…</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-download-svg" aria-disabled="true">Download SVG</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="menu-login">Login</button></li>
@@ -101,8 +101,73 @@
   <dialog id="my-archives-dialog" aria-labelledby="my-archives-dialog-heading">
     <button id="btn-my-archives-done" type="button">Done</button>
     <h3 id="my-archives-dialog-heading">My Archives</h3>
-    <h4>POI History</h4>
-    <ul id="poi-history-list"></ul>
+
+    <section aria-labelledby="recent-maps-heading">
+      <h4 id="recent-maps-heading">Recent Maps</h4>
+      <table id="recent-maps-table">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Date/Time</th>
+            <th scope="col">POIs</th>
+            <th scope="col">Hidden Features</th>
+          </tr>
+        </thead>
+        <tbody id="recent-maps-body"></tbody>
+      </table>
+      <button id="btn-clear-history" type="button">Clear History</button>
+    </section>
+
+    <section id="saved-maps-section" aria-labelledby="saved-maps-heading">
+      <h4 id="saved-maps-heading">Saved Maps</h4>
+      <fieldset id="saved-maps-sort">
+        <legend>Sort by</legend>
+        <label><input type="radio" name="saved-maps-sort" value="date" id="saved-maps-sort-date" checked> Date</label>
+        <label><input type="radio" name="saved-maps-sort" value="name" id="saved-maps-sort-name"> Name</label>
+      </fieldset>
+      <table id="saved-maps-table">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Date/Time</th>
+            <th scope="col">POIs</th>
+            <th scope="col">Hidden Features</th>
+            <th scope="col">Notes</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="saved-maps-body"></tbody>
+      </table>
+      <button id="btn-save-current-map" type="button">Save Current Map…</button>
+
+      <ul id="row-actions-menu" role="menu" aria-label="Map actions" hidden>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="row-actions-edit">Edit name/notes…</button></li>
+        <li role="none"><button type="button" role="menuitem" tabindex="-1" id="row-actions-delete">Delete…</button></li>
+      </ul>
+    </section>
+  </dialog>
+
+  <dialog id="save-map-dialog" aria-labelledby="save-map-dialog-heading">
+    <h3 id="save-map-dialog-heading">Save Map</h3>
+    <form id="save-map-form">
+      <div>
+        <label for="save-map-name">Name</label>
+        <input type="text" id="save-map-name" required>
+      </div>
+      <div>
+        <label for="save-map-notes">Notes</label>
+        <textarea id="save-map-notes"></textarea>
+      </div>
+      <button type="submit" id="btn-save-map-submit">Save</button>
+      <button type="button" id="btn-save-map-cancel">Cancel</button>
+    </form>
+  </dialog>
+
+  <dialog id="delete-saved-map-dialog" aria-labelledby="delete-saved-map-heading">
+    <h3 id="delete-saved-map-heading">Delete Saved Map</h3>
+    <p id="delete-saved-map-message"></p>
+    <button id="btn-delete-saved-map-yes" type="button">Yes</button>
+    <button id="btn-delete-saved-map-cancel" type="button">Cancel</button>
   </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">

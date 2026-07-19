@@ -67,7 +67,7 @@ A WAI-ARIA "Actions Menu Button" opened by the "Main Menu" button at the top of 
 
 * **"Display Preferences"** — opens the settings dialog, see [Settings](#settings). Always enabled.
 * **"Customize Map"** — opens the map-editing dialog, see [Editing the Map](#editing-the-map). Disabled (present but not activatable, `aria-disabled`, not native `disabled` — so it stays keyboard-navigable) until an anchor POI exists.
-* **"My Archives"** — opens the archives dialog, see [Saving and exporting](#saving-and-exporting). Disabled until signed in.
+* **"My Archives"** — opens the archives dialog, see [Saving and exporting](#saving-and-exporting). Available whether signed in or not (the current map's own row works locally without an account); the Map History and Saved Maps sections each show a sign-in prompt in place of their Firestore-backed content while signed out.
 * **"Help"** — opens a Help dialog documenting every hotkey/Dot Pad key combo plus a brief non-hotkey section for each dialog, see [Help](#help). Always enabled.
 * **"Download SVG"** — see [Download to Local SVG](#download-to-local-svg). Same disabled-until-anchor condition as Customize Map.
 * **"Login"** / **"Logout"** — one shown at a time depending on sign-in state, same convention as Connect/Disconnect Dot Pad below. See [Authentication](#authentication).
@@ -392,7 +392,7 @@ Saved as `[anchor short address].svg` (sanitized for filesystem-safe characters)
 
 ### Authentication
 
-Google ID via **Firebase Authentication**, chosen specifically because it's the native path for a Google Sign-In decision already made — no separate OAuth app integration beyond what creating the Firebase project already sets up. "Login"/"Logout" in the Main Menu (Firebase SDK loaded via CDN ES modules, no bundler); My Archives is disabled until signed in.
+Google ID via **Firebase Authentication**, chosen specifically because it's the native path for a Google Sign-In decision already made — no separate OAuth app integration beyond what creating the Firebase project already sets up. "Login"/"Logout" in the Main Menu (Firebase SDK loaded via CDN ES modules, no bundler), using `signInWithPopup`.
 
 ### Cloud storage
 
@@ -400,22 +400,20 @@ Google ID via **Firebase Authentication**, chosen specifically because it's the 
 
 ### Saving and exporting
 
-**POI History (implemented, proof-of-concept)**: every successfully-geocoded search is logged to Firestore (`users/{uid}/poiHistory`, one document per search: name, lat, lon, timestamp) while signed in. My Archives (Main Menu) shows this as a single newest-first list with a Done button — nothing else yet. This exists to prove the Auth + Firestore read/write pipeline works before building the full feature below.
+**The current map lives locally in the browser** (`localStorage`), independent of sign-in — it's not "in" Map History or Saved Maps until one of two things happens to it: a new map replaces it, or the user explicitly saves it. This local copy also survives a page reload, so an in-progress map isn't lost by refreshing.
 
-**The rest of My Archives is not yet implemented:**
+A current-map record holds exactly what's needed to recreate it: the anchor location (address/lat/lon), additional POIs, hidden street/POI names, and the viewport (pan) position. It deliberately excludes anything that's a display preference rather than map data — braille translation, label zone states, Map Complexity, cursor-only mode, and scale are never part of it. Street/way geometry is excluded too; only which streets are hidden is kept, and geometry is always re-fetched live from Overpass against the anchor location when a map is loaded, matching this app's live-data approach elsewhere — at the cost of a reloaded map potentially looking slightly different if the underlying OSM data changed in the meantime, an accepted tradeoff, not treated as a bug.
 
-The "My Archives" button opens a dialog with:
+**Map History (Firestore, `users/{uid}/recentMaps`, requires sign-in)**: whenever the current map is about to be replaced by a new one (a fresh search creating a new anchor), its final state is pushed to the top of Map History — unless it's identical to the entry already on top (e.g. the same location searched again), in which case only that entry's timestamp is refreshed rather than creating a duplicate. Capped at 10 entries, oldest dropped first. Loading a Map History entry never touches the list itself — it only becomes "current" again locally, and only counts as history once *it* is later replaced by something new.
 
-* A group named "Save current map," containing:
-     * An edit field labeled "Map Name"
-     * A "Save" button
-     * A list of previously saved maps by map name
-     * A "Load map" action, which overwrites the current data with the map from the archive being loaded. This is also the action that happens if you double-click a saved map name, or use focus commands and press Enter or Space bar on a saved map name.
-* If opening a saved map without saving the current map, another dialog appears: "If you continue loading this map you will lose your changes to [current map]. Do you want to continue?" Buttons: Continue and Cancel.
+**Saved Maps (Firestore, `users/{uid}/savedMaps`, requires sign-in)**: an explicit snapshot of the current map, taken only when the user presses "Save Current Map." Unlimited, and independent of Map History — saving doesn't touch history, and loading a saved map doesn't touch the saved copy (later changes to the loaded map never write back to it).
 
-When a map in the list is selected, options (as buttons and in the application menu) allow for opening (the default action), deleting, renaming, and downloading. Rename puts up a simple rename dialog. Download saves the selected file to a local file named `[map name].svg`. Delete puts up a confirmation dialog; pressing Del on a selected map also deletes it.
+The My Archives dialog (Main Menu) has two sections:
 
-**Saved-map data model: edits only, not a full snapshot.** A saved map document stores the anchor location (address/lat/lon), additional POIs, hidden street/POI names, the Map Complexity level, label zone states, and the scale at time of save — not the fetched OSM way/street geometry itself. Loading a saved map re-runs the normal Overpass fetch against the saved anchor, then reapplies the saved edits on top of that fresh data. Chosen over storing a full snapshot (including raw way geometry) to keep documents small and comfortably within the free tier's 1 GB ceiling, at the cost of a loaded map potentially looking slightly different if the underlying OSM data changed since it was saved — an accepted tradeoff, not treated as a bug.
+* **Recent Maps** — a table (Name, Date/Time, POIs, Hidden Features) with the current map as its own top row (plain text, not a link, since there's nothing to load) followed by up to 10 Map History entries, each a link that loads that map and closes the dialog. A "Clear History" button empties Map History only.
+* **Saved Maps** — a table (Name, Date/Time, POIs, Hidden Features, Notes, Actions), sortable by Name or Date via radio buttons in the header. Each row's Name is a link that loads that map and closes the dialog; each row's Actions menu offers "Edit name/notes…" (reopens the same Name/Notes dialog used to save, pre-filled) and "Delete…" (a Yes/Cancel confirmation). A "Save Current Map…" button opens a dialog with Name (pre-filled from the anchor POI) and Notes (blank) fields.
+
+Both sections show a sign-in prompt in place of their table content while signed out; the current-map row in Recent Maps still works either way, since it's local-only.
 
 ### Local development and testing
 
@@ -427,5 +425,5 @@ Known gaps, gathered here in one place so none get lost:
 
 * Line style (solid/dotted/dashed) for street segments — see [SVG Display Requirements](#svg-display-requirements).
 * POI distance threshold setting — see [Settings](#settings).
-* The rest of My Archives (save, load, rename, delete, download-from-archive, unsaved-changes confirmation) — see [Saving and exporting](#saving-and-exporting). Only POI History is implemented so far.
+* Download-from-archive and an unsaved-changes confirmation when loading over unsaved edits — see [Saving and exporting](#saving-and-exporting). Save/load/rename/delete are implemented; these two are not yet.
 
