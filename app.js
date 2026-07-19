@@ -1616,7 +1616,8 @@ btnLogin.addEventListener('click', async () => {
     await signInWithPopup(auth, googleProvider);
     setMessage('Signed in');
   } catch (err) {
-    setMessage('Sign-in failed');
+    console.error('Sign-in failed', err);
+    setMessage('Sign-in failed: ' + (err.code || err.message || 'unknown error'));
   }
 });
 
