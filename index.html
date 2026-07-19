@@ -102,34 +102,13 @@
     <button id="btn-my-archives-done" type="button">Done</button>
     <h3 id="my-archives-dialog-heading">My Archives</h3>
 
-    <section aria-labelledby="recent-maps-heading">
-      <h4 id="recent-maps-heading">Recent Maps</h4>
-      <table id="recent-maps-table">
-        <thead>
-          <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Date/Time</th>
-            <th scope="col">POIs</th>
-            <th scope="col">Hidden Features</th>
-          </tr>
-        </thead>
-        <tbody id="recent-maps-body"></tbody>
-      </table>
-      <button id="btn-clear-history" type="button">Clear History</button>
-    </section>
-
     <section id="saved-maps-section" aria-labelledby="saved-maps-heading">
       <h4 id="saved-maps-heading">Saved Maps</h4>
-      <fieldset id="saved-maps-sort">
-        <legend>Sort by</legend>
-        <label><input type="radio" name="saved-maps-sort" value="date" id="saved-maps-sort-date" checked> Date</label>
-        <label><input type="radio" name="saved-maps-sort" value="name" id="saved-maps-sort-name"> Name</label>
-      </fieldset>
       <table id="saved-maps-table">
         <thead>
           <tr>
-            <th scope="col">Name</th>
-            <th scope="col">Date/Time</th>
+            <th scope="col" aria-sort="none"><button type="button" class="sort-header" id="saved-maps-sort-name">Name</button></th>
+            <th scope="col" aria-sort="descending"><button type="button" class="sort-header" id="saved-maps-sort-date">Date/Time</button></th>
             <th scope="col">POIs</th>
             <th scope="col">Hidden Features</th>
             <th scope="col">Notes</th>
@@ -144,6 +123,22 @@
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="row-actions-edit">Edit name/notes…</button></li>
         <li role="none"><button type="button" role="menuitem" tabindex="-1" id="row-actions-delete">Delete…</button></li>
       </ul>
+    </section>
+
+    <section aria-labelledby="recent-maps-heading">
+      <h4 id="recent-maps-heading">Recent Maps</h4>
+      <table id="recent-maps-table">
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Date/Time</th>
+            <th scope="col">POIs</th>
+            <th scope="col">Hidden Features</th>
+          </tr>
+        </thead>
+        <tbody id="recent-maps-body"></tbody>
+      </table>
+      <button id="btn-clear-history" type="button">Clear History</button>
     </section>
   </dialog>
 

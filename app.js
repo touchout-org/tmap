@@ -1833,12 +1833,15 @@ async function renderRecentMapsSection() {
 }
 
 // § My Archives — fetched once per dialog open, re-sorted client-side by
-// the sort radio buttons (no need for a second Firestore query).
+// clicking the Name/Date column headers (no need for a second Firestore
+// query). savedMapsSortKey persists across re-renders within the same
+// dialog session, same as radio buttons would have.
 let savedMapsCache = [];
+let savedMapsSortKey = 'date';
 
 function sortedSavedMaps() {
   const sorted = [...savedMapsCache];
-  if (savedMapsSortName.checked) {
+  if (savedMapsSortKey === 'name') {
     sorted.sort((a, b) => a.name.localeCompare(b.name));
   } else {
     sorted.sort((a, b) => (b.savedAt ? b.savedAt.toMillis() : 0) - (a.savedAt ? a.savedAt.toMillis() : 0));
@@ -1932,8 +1935,19 @@ btnClearHistory.addEventListener('click', async () => {
   renderRecentMapsSection();
 });
 
-savedMapsSortDate.addEventListener('change', () => renderSavedMapsTable());
-savedMapsSortName.addEventListener('change', () => renderSavedMapsTable());
+// § My Archives — clickable column headers replace what would otherwise
+// be separate sort radio buttons; aria-sort on each <th> communicates the
+// active column/direction to screen readers the same way a checked radio
+// would have.
+function setSavedMapsSortKey(key) {
+  savedMapsSortKey = key;
+  savedMapsSortName.closest('th').setAttribute('aria-sort', key === 'name' ? 'ascending' : 'none');
+  savedMapsSortDate.closest('th').setAttribute('aria-sort', key === 'date' ? 'descending' : 'none');
+  renderSavedMapsTable();
+}
+
+savedMapsSortName.addEventListener('click', () => setSavedMapsSortKey('name'));
+savedMapsSortDate.addEventListener('click', () => setSavedMapsSortKey('date'));
 
 // § My Archives — Save Map dialog is shared by "Save Current Map" (create)
 // and the Actions menu's "Edit name/notes" (update) -- editingSavedMapId
@@ -1986,6 +2000,16 @@ saveMapForm.addEventListener('submit', async (event) => {
   }
   saveMapDialog.close();
   reopenMyArchivesDialog();
+});
+
+// § My Archives — a plain text <input> (Name) already submits its form on
+// Enter natively; a <textarea> (Notes) does not, so this is needed only
+// here. Shift+Enter still inserts a literal newline in Notes.
+saveMapNotesInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && isExactModifiers(event, {})) {
+    event.preventDefault();
+    saveMapForm.requestSubmit();
+  }
 });
 
 btnSaveMapCancel.addEventListener('click', () => {

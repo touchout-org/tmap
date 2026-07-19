@@ -410,8 +410,8 @@ A current-map record holds exactly what's needed to recreate it: the anchor loca
 
 The My Archives dialog (Main Menu) has two sections:
 
+* **Saved Maps** — a table (Name, Date/Time, POIs, Hidden Features, Notes, Actions), sortable by clicking the Name or Date/Time column header itself (`aria-sort` on the `<th>` reflects the active column/direction). Each row's Name is a link that loads that map and closes the dialog; each row's Actions menu offers "Edit name/notes…" (reopens the same Name/Notes dialog used to save, pre-filled, and — like the Save dialog — treats Enter in the Notes field as Save rather than a literal newline, Shift+Enter for an actual newline) and "Delete…" (a Yes/Cancel confirmation). A "Save Current Map…" button opens a dialog with Name (pre-filled from the anchor POI) and Notes (blank) fields.
 * **Recent Maps** — a table (Name, Date/Time, POIs, Hidden Features) with the current map as its own top row (plain text, not a link, since there's nothing to load) followed by up to 10 Map History entries, each a link that loads that map and closes the dialog. A "Clear History" button empties Map History only.
-* **Saved Maps** — a table (Name, Date/Time, POIs, Hidden Features, Notes, Actions), sortable by Name or Date via radio buttons in the header. Each row's Name is a link that loads that map and closes the dialog; each row's Actions menu offers "Edit name/notes…" (reopens the same Name/Notes dialog used to save, pre-filled) and "Delete…" (a Yes/Cancel confirmation). A "Save Current Map…" button opens a dialog with Name (pre-filled from the anchor POI) and Notes (blank) fields.
 
 Both sections show a sign-in prompt in place of their table content while signed out; the current-map row in Recent Maps still works either way, since it's local-only.
 

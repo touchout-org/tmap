@@ -257,18 +257,32 @@ body {
   font: inherit;
 }
 
-#saved-maps-sort {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+/* § My Archives — Saved Maps' Name/Date column headers double as sort
+   controls (click to sort by that column) rather than separate radio
+   buttons. aria-sort on the <th> (set in app.js) communicates the active
+   column/direction to screen readers; the arrow here is a sighted-only
+   echo of that same state. */
+.sort-header {
   border: none;
-  padding: 0;
-  margin: 0.5rem 0;
-}
-
-#saved-maps-sort legend {
+  background: none;
+  font: inherit;
   font-weight: bold;
   padding: 0;
+  cursor: pointer;
+}
+
+.sort-header:hover,
+.sort-header:focus {
+  text-decoration: underline;
+  outline: none;
+}
+
+th[aria-sort="ascending"] .sort-header::after {
+  content: " \25B2";
+}
+
+th[aria-sort="descending"] .sort-header::after {
+  content: " \25BC";
 }
 
 /* § My Archives — a single shared Actions popup menu, repositioned per row
