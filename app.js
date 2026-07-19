@@ -1599,6 +1599,7 @@ function updateAuthUI(user) {
   btnLogin.hidden = !!user;
   btnLogout.hidden = !user;
   if (user) {
+    btnLogout.textContent = `Logged in as ${user.displayName || user.email} — logout`;
     btnMyArchives.removeAttribute('aria-disabled');
   } else {
     btnMyArchives.setAttribute('aria-disabled', 'true');
