@@ -1085,7 +1085,7 @@ async function runSearch(query) {
   try {
     place = await geocode(query);
   } catch (err) {
-    setMessage('Search failed');
+    setMessage(humanizeOsmError(err, 'address'));
     return;
   }
   if (!place) {
@@ -1135,7 +1135,7 @@ async function createNewAnchor(displayName, shortName, lat, lon, query) {
   try {
     ways = await fetchWays(bbox, query);
   } catch (err) {
-    setMessage('Streets failed');
+    setMessage(humanizeOsmError(err, 'street-data'));
     return;
   }
   // § My Archives — the map about to be discarded gets archived to Map
@@ -1167,7 +1167,7 @@ async function loadMapRecord(record) {
   try {
     ways = await fetchWays(bbox, record.searchQuery);
   } catch (err) {
-    setMessage('Streets failed');
+    setMessage(humanizeOsmError(err, 'street-data'));
     return;
   }
   archiveOutgoingMapIfNeeded();
@@ -2198,14 +2198,66 @@ function announcePositionRelativeToAnchor() {
   setMessage(distFt === 0 ? `At ${lastAnchorName}` : `${formatDistance(distFt)} ${compass} of ${lastAnchorName}`);
 }
 
+// § Data ingestion and cleaning pipeline — error reporting (see README.md §
+// Data sources: "any Nominatim/Overpass error ... must be surfaced rather
+// than fail silently"). geocode() and fetchWays() both throw an
+// OsmFetchError classifying *why* the request failed; humanizeOsmError()
+// turns that into the actual sentence shown via setMessage() at each call
+// site, parametrized by which stage failed ('address' vs 'street-data').
+class OsmFetchError extends Error {
+  constructor(kind, status) {
+    super(`osm-fetch-error:${kind}`);
+    this.kind = kind; // 'network' | 'rate-limited' | 'timeout' | 'server-error'
+    this.status = status;
+  }
+}
+
+// Maps an HTTP status from a non-ok response to an OsmFetchError kind.
+function classifyHttpFailure(status) {
+  if (status === 429) return 'rate-limited';
+  if (status === 504) return 'timeout';
+  return 'server-error';
+}
+
+const OSM_ERROR_MESSAGES = {
+  address: {
+    network: "Couldn't reach OpenStreetMap to look up that address — check your internet connection and try again.",
+    'rate-limited': "OpenStreetMap's address lookup is rate-limiting requests right now. Wait a moment and try again.",
+    timeout: 'The address lookup timed out. Try again in a moment.',
+    'server-error': (status) => `OpenStreetMap's address lookup returned an unexpected error${status ? ` (status ${status})` : ''}. Try again in a moment.`
+  },
+  'street-data': {
+    network: "Couldn't reach OpenStreetMap to fetch street data — check your internet connection and try again.",
+    'rate-limited': "OpenStreetMap's street-data service is rate-limiting requests right now. Wait a moment and try again.",
+    timeout: 'The street-data query took too long for this area. Try again, or try a smaller search area.',
+    'server-error': (status) => `OpenStreetMap's street-data service returned an unexpected error${status ? ` (status ${status})` : ''}. Try again in a moment.`
+  }
+};
+
+// Logs the real error to the console (nothing did this before — the only
+// trail was reproducing the request by hand) and returns the human-readable
+// sentence for setMessage(). stage is 'address' or 'street-data'.
+function humanizeOsmError(err, stage) {
+  console.error(`${stage} fetch failed:`, err);
+  const kind = err instanceof OsmFetchError ? err.kind : 'server-error';
+  const status = err instanceof OsmFetchError ? err.status : undefined;
+  const entry = OSM_ERROR_MESSAGES[stage][kind];
+  return typeof entry === 'function' ? entry(status) : entry;
+}
+
 // § Data ingestion and cleaning pipeline, step 1 (Geocode)
 async function geocode(query) {
   const cached = await loadLocalTestData(query);
   if (cached) return cached.geocode;
 
   const url = `${NOMINATIM_URL}?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1`;
-  const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error('geocode-failed');
+  let res;
+  try {
+    res = await fetch(url, { headers: { Accept: 'application/json' } });
+  } catch (err) {
+    throw new OsmFetchError('network');
+  }
+  if (!res.ok) throw new OsmFetchError(classifyHttpFailure(res.status), res.status);
   const data = await res.json();
   return data.length ? data[0] : null;
 }
@@ -2358,12 +2410,22 @@ async function fetchWays(bbox, searchQuery) {
   if (cached) return cached.ways;
 
   const overpassQuery = `[out:json][timeout:25];way["highway"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});out geom;`;
-  const res = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    body: 'data=' + encodeURIComponent(overpassQuery)
-  });
-  if (!res.ok) throw new Error('overpass-failed');
+  let res;
+  try {
+    res = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      body: 'data=' + encodeURIComponent(overpassQuery)
+    });
+  } catch (err) {
+    throw new OsmFetchError('network');
+  }
+  if (!res.ok) throw new OsmFetchError(classifyHttpFailure(res.status), res.status);
   const data = await res.json();
+  // Overpass can return HTTP 200 with an empty/partial result and a
+  // `remark` field describing a server-side failure (e.g. a query timeout)
+  // -- this wouldn't trip res.ok at all, and used to render as a silent
+  // "no streets here" instead of surfacing the real cause.
+  if (data.remark) throw new OsmFetchError('timeout');
   return data.elements || [];
 }
 
