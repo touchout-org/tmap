@@ -29,9 +29,18 @@ import {
   connectFirestoreEmulator
 } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
 
-// Data sources — see tmap spec.md § Data sources
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+// Data sources — see README.md § Data sources. Geocoding (address -> coordinates)
+// is now Google's Geocoder (google.maps.Geocoder) instead of Nominatim, to
+// evaluate whether it's more reliable for POI/business-name searches; street
+// data is still Overpass.
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+// Client-side Maps Platform key: not secret -- protected by the API
+// restriction (Maps JavaScript API + Places API only) and the website
+// restriction (touchout.org/www.touchout.org/localhost/127.0.0.1) set on the
+// key itself, not by hiding this. Safe to commit as-is, same trust model as
+// the Firebase apiKey below.
+const GOOGLE_MAPS_API_KEY = 'AIzaSyDCEb-FQsWaDh4zLI61R_xiELCq76bZKwA';
 
 // § Local test data cache (dev-only, see test-data/README.md) — set to true
 // while testing locally to serve cached geocode+Overpass data for the
@@ -2221,10 +2230,10 @@ function classifyHttpFailure(status) {
 
 const OSM_ERROR_MESSAGES = {
   address: {
-    network: "Couldn't reach OpenStreetMap to look up that address — check your internet connection and try again.",
-    'rate-limited': "OpenStreetMap's address lookup is rate-limiting requests right now. Wait a moment and try again.",
+    network: "Couldn't reach Google to look up that address — check your internet connection and try again.",
+    'rate-limited': "Google's address lookup is rate-limiting requests right now. Wait a moment and try again.",
     timeout: 'The address lookup timed out. Try again in a moment.',
-    'server-error': (status) => `OpenStreetMap's address lookup returned an unexpected error${status ? ` (status ${status})` : ''}. Try again in a moment.`
+    'server-error': (status) => `Google's address lookup returned an unexpected error${status ? ` (status ${status})` : ''}. Try again in a moment.`
   },
   'street-data': {
     network: "Couldn't reach OpenStreetMap to fetch street data — check your internet connection and try again.",
@@ -2245,21 +2254,92 @@ function humanizeOsmError(err, stage) {
   return typeof entry === 'function' ? entry(status) : entry;
 }
 
+// Lazily loads the Maps JavaScript API bootstrap script (once per page
+// load) and resolves once google.maps is available. Verified empirically
+// (see project notes) that including libraries=places here makes
+// google.maps.Geocoder constructable immediately on the load callback,
+// without needing the newer importLibrary() pattern.
+let googleMapsLoadPromise = null;
+function loadGoogleMaps() {
+  if (googleMapsLoadPromise) return googleMapsLoadPromise;
+  googleMapsLoadPromise = new Promise((resolve, reject) => {
+    if (window.google && window.google.maps) {
+      resolve();
+      return;
+    }
+    window.__dottmapInitGoogleMaps = () => resolve();
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places&callback=__dottmapInitGoogleMaps&loading=async`;
+    script.async = true;
+    script.onerror = () => reject(new Error('google-maps-script-failed'));
+    document.head.appendChild(script);
+  });
+  return googleMapsLoadPromise;
+}
+
+// Maps a google.maps.GeocoderStatus (other than 'OK'/'ZERO_RESULTS', both
+// handled by the caller) to the same OsmFetchError 'kind' vocabulary
+// classifyHttpFailure uses for Overpass, so humanizeOsmError's wording and
+// the call sites' catch blocks don't need to know which provider failed.
+function classifyGoogleGeocoderStatus(status) {
+  if (status === 'OVER_QUERY_LIMIT') return 'rate-limited';
+  // Google's own docs describe UNKNOWN_ERROR as a transient server-side
+  // issue where retrying is likely to succeed -- closest existing bucket.
+  if (status === 'UNKNOWN_ERROR') return 'timeout';
+  return 'server-error'; // REQUEST_DENIED, INVALID_REQUEST, etc.
+}
+
+// Converts a google.maps.GeocoderResult into the same shape geocode() has
+// always returned (originally Nominatim's), so formatPlaceName/
+// formatShortAddress and the local test-data cache (built from real
+// Nominatim responses) don't need to change. One real behavior difference:
+// place.name is always null here -- Geocoder resolves addresses, not
+// business/POI names, unlike Nominatim's search endpoint.
+function convertGoogleGeocodeResult(result) {
+  const components = {};
+  for (const component of result.address_components || []) {
+    for (const type of component.types) {
+      components[type] = component.long_name;
+    }
+  }
+  return {
+    lat: result.geometry.location.lat(),
+    lon: result.geometry.location.lng(),
+    display_name: result.formatted_address,
+    name: null,
+    address: {
+      house_number: components.street_number,
+      road: components.route,
+      city: components.locality || components.postal_town || components.sublocality,
+      state: components.administrative_area_level_1,
+      postcode: components.postal_code,
+      country: components.country
+    }
+  };
+}
+
 // § Data ingestion and cleaning pipeline, step 1 (Geocode)
 async function geocode(query) {
   const cached = await loadLocalTestData(query);
   if (cached) return cached.geocode;
 
-  const url = `${NOMINATIM_URL}?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1`;
-  let res;
   try {
-    res = await fetch(url, { headers: { Accept: 'application/json' } });
+    await loadGoogleMaps();
   } catch (err) {
     throw new OsmFetchError('network');
   }
-  if (!res.ok) throw new OsmFetchError(classifyHttpFailure(res.status), res.status);
-  const data = await res.json();
-  return data.length ? data[0] : null;
+
+  const geocoder = new google.maps.Geocoder();
+  let response;
+  try {
+    response = await geocoder.geocode({ address: query });
+  } catch (err) {
+    const status = err && err.code;
+    if (status === 'ZERO_RESULTS') return null;
+    throw new OsmFetchError(classifyGoogleGeocoderStatus(status), status);
+  }
+
+  return response.results.length ? convertGoogleGeocodeResult(response.results[0]) : null;
 }
 
 function formatPlaceName(place) {
