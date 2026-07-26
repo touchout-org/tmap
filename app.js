@@ -4818,6 +4818,15 @@ sdk.setCallBack(
     // Scale: two-dot combos.
     else if (byte6 === 0x06) changeScale(1);     // dots 2+3 -> increase (zoom out)
     else if (byte6 === 0x30) changeScale(-1);    // dots 5+6 -> decrease (zoom in)
+    // § Braille labels — label zone toggles, matching the braille-cell dot
+    // pattern of u/m/w/r (the same top/bottom/left/right assignment as the
+    // i/j/k/l keyboard hotkeys, see labelZoneKeys above). Works regardless
+    // of whether a map is loaded, same as the keyboard hotkeys, since
+    // toggleLabelZone/setLabelZone don't depend on one.
+    else if (byte6 === 0x25) toggleLabelZone('top');     // dots 1+3+6 (u)
+    else if (byte6 === 0x0D) toggleLabelZone('bottom');  // dots 1+3+4 (m)
+    else if (byte6 === 0x3A) toggleLabelZone('left');    // dots 2+4+5+6 (w)
+    else if (byte6 === 0x17) toggleLabelZone('right');   // dots 1+2+3+5 (r)
     // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
     else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
     else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI

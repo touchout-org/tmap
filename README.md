@@ -97,10 +97,10 @@ The following table specifies the functions that can be accessed from the app or
 | Pan Right | Ctrl+Right arrow | dots 4+6 |
 | Increase Scale (zoom out) | `[` | dots 2+3 |
 | Decrease Scale (zoom in) | `]` | dots 5+6 |
-| Toggle Labels Top | `i` | none |
-| Toggle Labels Bottom | `k` | none |
-| Toggle Labels Left | `j` | none |
-| Toggle Labels Right | `l` | none |
+| Toggle Labels Top | `i` | dots 1+3+6 (`u`) |
+| Toggle Labels Bottom | `k` | dots 1+3+4 (`m`) |
+| Toggle Labels Left | `j` | dots 2+4+5+6 (`w`) |
+| Toggle Labels Right | `l` | dots 1+2+3+5 (`r`) |
 | Map Complexity: All streets and pathways | `1` | none |
 | Map Complexity: Simplified neighborhoods | `2` | none |
 | Map Complexity: Major streets | `3` | none |
@@ -124,7 +124,7 @@ The 1-4 hotkeys jump straight to a Map Complexity level (see [Editing the Map](#
 
 Cursor rows use the same dot mapping as [Cursor and hit testing](#cursor-and-hit-testing). Toggle Labels Top and Bottom complete the set of 4 label positions, matching the left/right/top/bottom checkboxes in [Settings](#settings).
 
-The `i`/`j`/`k`/`l` hotkeys and the Braille Labels dialog's four checkboxes drive one shared piece of state, not two independent ones. The hotkeys work regardless of whether the dialog is open; whenever the dialog is opened (or reopened), each checkbox simply reflects whatever that shared state currently is — there's no separate sync step, the checkbox display is a live view of the same toggle the hotkeys set.
+The `i`/`j`/`k`/`l` keyboard hotkeys, the `u`/`m`/`w`/`r` Dot Pad key combos, and the Braille Labels dialog's four checkboxes all drive one shared piece of state, not separate ones. Any of the three work regardless of whether the dialog is open; whenever the dialog is opened (or reopened), each checkbox simply reflects whatever that shared state currently is — there's no separate sync step, the checkbox display is a live view of the same toggle the hotkeys and Dot Pad combos set. The Dot Pad combos exist so labels can be toggled without touching the QWERTY keyboard at all; each one's dot pattern is that letter's own braille cell (`u` = dots 1+3+6, etc.), not a mnemonic tied to "top/bottom/left/right" — same convention as the pan/scale/cursor combos above.
 
 ## Help
 
