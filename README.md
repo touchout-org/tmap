@@ -106,7 +106,7 @@ The following table specifies the functions that can be accessed from the app or
 | Map Complexity: Major streets | `3` | none |
 | Map Complexity: Major highways | `4` | none |
 | Cycle Map Complexity (decreasing, wraps) | `x` | dots 1+3+4+6 (`x`) |
-| Toggle cursor-only mode | `0` | none |
+| Toggle cursor-only mode | `0` | dots 3+5+6 |
 | Open Custom POI ("Drop Pin") dialog | `a` | none |
 | Next POI | `.` | dot 4 |
 | Previous POI | `,` | dot 1 |
@@ -121,7 +121,9 @@ The 1-4 hotkeys jump straight to a Map Complexity level (see [Editing the Map](#
 
 `x` (keyboard or Dot Pad, both the same command, sharing the letter's own braille cell — dots 1+3+4+6) steps through the same four levels one at a time in decreasing-complexity order (All streets and pathways → Simplified neighborhoods → Major streets → Major highways), wrapping back to All streets and pathways past the end — a single "simplify one more step" command instead of needing to know which specific 1-4 level to jump to. Same announcement and dialog-sync behavior as 1-4.
 
-`0` hides every currently-visible street and POI and shows only the cursor, announcing "Cursor only"; pressing it again restores exactly what was showing before (whatever combination of Visible/Hidden Streets, Hidden Features, and Map Complexity was already in effect), announcing "Features restored." This is a display-only override — it never changes any of that underlying state, and the on-screen POI list box keeps working normally throughout, since it's a navigation aid rather than a rendered map feature.
+`0` (keyboard or Dot Pad dots 3+5+6, both the same command) hides every currently-visible street and POI and shows only the cursor, announcing "Cursor only"; pressing it again (either input) restores exactly what was showing before (whatever combination of Visible/Hidden Streets, Hidden Features, and Map Complexity was already in effect), announcing "Features restored." This is a display-only override — it never changes any of that underlying state, and the on-screen POI list box keeps working normally throughout, since it's a navigation aid rather than a rendered map feature.
+
+**Cursor Solo Timeout** (see [Settings](#settings)) optionally reverts cursor-only mode back to "Features restored" on its own, a fixed number of seconds after it's turned on — so it doesn't have to be remembered and manually turned back off. Turning it off manually before the timeout elapses cancels the pending auto-revert, same as if the timeout feature didn't exist; the two paths (manual and automatic) end up in exactly the same state either way. Changing the Cursor Solo Timeout setting while cursor-only mode is already active and counting down takes effect immediately, per the Settings dialog's live-apply rule (see [Editing the Map](#editing-the-map)) — the pending countdown restarts under the new duration rather than waiting to expire under the old one, or is cancelled outright if the new value is None. Setting it to None disables the auto-revert entirely — manual toggle only, the original behavior before this setting existed. A brand-new anchor search always cancels any pending countdown, the same way it resets `cursorOnlyMode` itself, so a stale timer from a discarded map can never fire against a new one.
 
 `a` opens the Custom POI dialog described under [Custom POIs](#custom-pois) — same as clicking "Drop Pin."
 
@@ -345,7 +347,7 @@ Default values in [brackets].
 
 The Settings dialog (opened via "Display Preferences" in the [Main Menu](#main-menu)) follows the same pattern as Customize Map: fully live-apply, no Save/Cancel step. **Every control in this dialog applies immediately on change** — there is no staging, no commit step, and nothing to discard. Opening the dialog only syncs each control's displayed value/checked state to match current app state. The dialog has a single **Done** button that just closes it; there is no OK or Cancel, since a change already took effect the moment it was made.
 
-**Persists across sessions:** Braille Translation, the four label-zone checkboxes, Units, and Pan Amount are all saved to `localStorage` on every change and restored on page load, independent of sign-in (see [Accounts and Data](#accounts-and-data) § Local development and testing) — a page reload or a fresh visit picks up right where the last one left off. **Scale is deliberately excluded**: it already resets to `DEFAULT_SCALE_INDEX` on every new anchor search regardless of any prior value (see [Scale behavior](#scale-behavior)), so persisting it would load correctly and then silently get overwritten the instant a search happens. A malformed or corrupted stored value for any field is validated per-field on load and falls back to that field's normal built-in default.
+**Persists across sessions:** Braille Translation, the four label-zone checkboxes, Units, Pan Amount, and Cursor Solo Timeout are all saved to `localStorage` on every change and restored on page load, independent of sign-in (see [Accounts and Data](#accounts-and-data) § Local development and testing) — a page reload or a fresh visit picks up right where the last one left off. **Scale is deliberately excluded**: it already resets to `DEFAULT_SCALE_INDEX` on every new anchor search regardless of any prior value (see [Scale behavior](#scale-behavior)), so persisting it would load correctly and then silently get overwritten the instant a search happens. A malformed or corrupted stored value for any field is validated per-field on load and falls back to that field's normal built-in default.
 
 The dialog is organized into sub-sections, each under its own heading:
 
@@ -361,6 +363,8 @@ The dialog is organized into sub-sections, each under its own heading:
         * **Metric**: 1 cm = 10, 25, 35, [50], 60, 120, 180, 250, 600 m — the closest clean round numbers to each Imperial preset's actual real-world footprint (accounting for the fixed inch-to-cm ratio of the physical display, not a naive number-for-number conversion). The two ladders are independent round-number sets, not exact conversions of each other: the same preset index can describe a slightly different real-world map footprint depending on which unit system is active, and switching Units while a map is showing re-renders it at the new effective footprint for the current preset index.
     * Pan Amount: [1/4], 1/2, 3/4, 1 — live-apply. A single value shared by both horizontal and vertical pans, in units of the **current viewbox's** width/height — not the fixed physical display. Since active label zones shrink the viewbox (see [Braille labels](#braille-labels)), the real-world distance covered by a pan shrinks right along with it: e.g. with the Top zone active (reducing the display's usable height), a vertical pan covers proportionally less real-world distance than with no zones active, at the same Pan Amount and Scale setting. The actual real-world distance also varies with the current Scale. Changing it announces "Pan amount: [value]" through the message field; takes effect on the next pan, nothing on screen changes immediately.
     * POI distance threshold: [1 mile], 2 miles, 3 miles — not yet implemented.
+* **"Cursor" heading**:
+    * Cursor Solo Timeout: 1 sec, [2 sec], 3 sec, 5 sec, None — live-apply, including against an already-running countdown (see [Editing the Map](#editing-the-map) for the cursor-only mode behavior this controls). None disables the auto-revert entirely, leaving cursor-only mode as a manual-toggle-only override, same as before this setting existed.
 
 ## Download to Local SVG
 

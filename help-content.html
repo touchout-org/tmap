@@ -53,7 +53,7 @@
 </table>
 
 <h4>Scale and Map Complexity</h4>
-<p>The Map Complexity hotkeys (1-4, or <code>x</code> to cycle through them) are a shortcut for the same control found in Map Customization. Cursor-only mode is a temporary display override — press <code>0</code> again to restore exactly what was showing before.</p>
+<p>The Map Complexity hotkeys (1-4, or <code>x</code> to cycle through them) are a shortcut for the same control found in Map Customization. Cursor-only mode is a temporary display override — press <code>0</code> (or its Dot Pad combo) again to restore exactly what was showing before, or just wait it out if a Cursor Solo Timeout is set in Display Preferences.</p>
 <table>
   <thead>
     <tr>
@@ -71,7 +71,7 @@
     <tr><td>Show only major streets and highways</td><td>3</td><td>none</td><td>Arterials and highways; makes maps readable at larger scales</td></tr>
     <tr><td>Show only major highways</td><td>4</td><td>none</td><td>Shows only the most significant roads</td></tr>
     <tr><td>Cycle Map Complexity</td><td>x</td><td>Dots 1+3+4+6</td><td>Steps to the next-simpler level, wrapping back to "all streets and pathways" after the last</td></tr>
-    <tr><td>Toggle cursor-only mode</td><td>0</td><td>none</td><td>Temporarily hides everything but the cursor</td></tr>
+    <tr><td>Toggle cursor-only mode</td><td>0</td><td>Dots 3+5+6</td><td>Temporarily hides everything but the cursor</td></tr>
   </tbody>
 </table>
 
@@ -133,7 +133,7 @@
 <p>Opens via the <code>a</code> hotkey or the Drop Pin button next to the POI list. DotTMAP looks up nearby addresses, tourist attractions, and businesses from OpenStreetMap and lists them alphabetically; the first one fills in the name field automatically. Up/Down step through the rest of the suggestions (they stop at either end, no wraparound), or you can just type your own name. OK always drops the new POI at the cursor's current position, no matter which suggestion is showing; Cancel adds nothing.</p>
 
 <h4>Display Preferences</h4>
-<p>Opens from the Main Menu. Every control here applies immediately — there's no OK/Cancel, just a Done button to close it. Includes Braille Translation, the four braille label checkboxes, Units (Imperial/Metric — affects Scale and how distances are announced), Scale, and Pan Amount.</p>
+<p>Opens from the Main Menu. Every control here applies immediately — there's no OK/Cancel, just a Done button to close it. Includes Braille Translation, the four braille label checkboxes, Units (Imperial/Metric — affects Scale and how distances are announced), Scale, Pan Amount, and Cursor Solo Timeout (1/2/3/5 seconds, or None) — how long cursor-only mode stays on before automatically restoring everything on its own; changing it while cursor-only mode is already active and counting down takes effect immediately, restarting the countdown under the new duration.</p>
 
 <h4>Map Customization</h4>
 <p>Opens from the Main Menu (formerly "Edit map..."). Shows or hides individual POIs and streets, lists everything currently hidden in one place, and includes the Map Complexity control — every action here takes effect immediately, with no Save/Cancel step.</p>

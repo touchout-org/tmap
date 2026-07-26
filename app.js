@@ -235,6 +235,18 @@ const DOT_PAD_DISPLAY_WIDTH_INCHES = 6 + 3 / 16;
 // pair of independent horizontal/vertical settings). Default 1/4.
 let panAmountFraction = 0.25;
 
+// § Settings — how long cursor-only mode stays on before automatically
+// reverting to "Features restored" on its own, per the Cursor Solo Timeout
+// setting: a number of seconds, or the string 'none' (no auto-revert --
+// manual toggle only, today's original behavior). Declared here (not
+// nearer cursorOnlyMode below) specifically so it's already initialized by
+// the time loadPersistedSettings() runs at module load -- that call sits
+// between here and cursorOnlyMode's declaration, and would otherwise throw
+// a temporal-dead-zone ReferenceError reading this before its own
+// initializer ran. See startCursorSoloTimer/clearCursorSoloTimer below.
+let cursorSoloTimeoutSeconds = 2;
+let cursorSoloTimeoutHandle = null;
+
 // § Street importance tiers — every way gets tagged with a tier in
 // processWays, purely as data for the Map Complexity filter (see
 // MAP_COMPLEXITY_LEVELS/visibleWays). An unrecognized highway value (the
@@ -347,6 +359,7 @@ const settingsDialog = document.getElementById('settings-dialog');
 const settingsBrailleCodeSelect = document.getElementById('settings-braille-code');
 const settingsUnitsSelect = document.getElementById('settings-units');
 const settingsPanAmountSelect = document.getElementById('settings-pan-amount');
+const settingsCursorSoloTimeoutSelect = document.getElementById('settings-cursor-solo-timeout');
 const btnSettingsDone = document.getElementById('btn-settings-done');
 const btnHelp = document.getElementById('menu-help');
 const helpDialog = document.getElementById('help-dialog');
@@ -405,9 +418,10 @@ let labelZones = { top: false, bottom: false, left: false, right: false };
 
 // § Settings — Settings persistence across sessions, local-only via
 // localStorage, independent of sign-in (see tmap spec.md § Settings /
-// Accounts and Data). Covers exactly the four settings that already
+// Accounts and Data). Covers exactly the five settings that already
 // survive a new anchor search unchanged (brailleCodeSetting, unitSystem,
-// panAmountFraction, labelZones) -- deliberately NOT scaleIndex, since
+// panAmountFraction, labelZones, cursorSoloTimeoutSeconds) -- deliberately
+// NOT scaleIndex, since
 // showAnchor already resets that to DEFAULT_SCALE_INDEX on every new
 // search regardless of any prior value, so persisting it would silently
 // do nothing (it'd load correctly, then get overwritten the instant a
@@ -446,9 +460,12 @@ function loadPersistedSettings() {
       if (typeof stored.labelZones[zone] === 'boolean') labelZones[zone] = stored.labelZones[zone];
     }
   }
+  if (stored.cursorSoloTimeoutSeconds === 'none' || [1, 2, 3, 5].includes(stored.cursorSoloTimeoutSeconds)) {
+    cursorSoloTimeoutSeconds = stored.cursorSoloTimeoutSeconds;
+  }
 }
 
-// Called after every change to one of the four persisted settings (see
+// Called after every change to one of the five persisted settings (see
 // each control's own change listener, and setLabelZone). Failure (e.g.
 // storage disabled/full in this browser) is silently ignored -- this is a
 // convenience feature, not a P0 requirement to surface errors for like
@@ -459,7 +476,8 @@ function savePersistedSettings() {
       brailleCodeSetting,
       unitSystem,
       panAmountFraction,
-      labelZones
+      labelZones,
+      cursorSoloTimeoutSeconds
     }));
   } catch (err) {
     // Ignored -- see comment above.
@@ -1017,6 +1035,7 @@ btnSettings.addEventListener('click', () => {
   settingsBrailleCodeSelect.value = brailleCodeSetting;
   settingsUnitsSelect.value = unitSystem;
   settingsPanAmountSelect.value = String(panAmountFraction);
+  settingsCursorSoloTimeoutSelect.value = String(cursorSoloTimeoutSeconds);
   for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
   settingsDialog.showModal();
 });
@@ -1056,6 +1075,19 @@ settingsPanAmountSelect.addEventListener('change', () => {
   panAmountFraction = Number(settingsPanAmountSelect.value);
   savePersistedSettings();
   setMessage(`Pan amount: ${settingsPanAmountSelect.selectedOptions[0].textContent}`);
+});
+
+// § Settings — live-apply, same as every other control here: if cursor-only
+// mode is active right now, the change takes effect on its already-running
+// timer immediately (restarted under the new duration, or cancelled
+// entirely if the new value is "None") rather than waiting for the next
+// time cursor-only mode is entered.
+settingsCursorSoloTimeoutSelect.addEventListener('change', () => {
+  const raw = settingsCursorSoloTimeoutSelect.value;
+  cursorSoloTimeoutSeconds = raw === 'none' ? 'none' : Number(raw);
+  savePersistedSettings();
+  setMessage(`Cursor solo timeout: ${settingsCursorSoloTimeoutSelect.selectedOptions[0].textContent}`);
+  if (cursorOnlyMode) startCursorSoloTimer();
 });
 
 // § Help — content lives in its own static file (help-content.html), not
@@ -1119,12 +1151,40 @@ function setMapComplexity(index) {
   if (radio) radio.checked = true;
 }
 
-// § Command / hotkey mapping — the 0 hotkey. See cursorOnlyMode above for
+// § Command / hotkey mapping — the 0 hotkey (also dots 3+5+6 on the Dot
+// Pad, see the device key handler below). See cursorOnlyMode above for
 // what it does and doesn't affect.
 function toggleCursorOnlyMode() {
   cursorOnlyMode = !cursorOnlyMode;
   setMessage(cursorOnlyMode ? 'Cursor only' : 'Features restored');
   refreshMap();
+  if (cursorOnlyMode) {
+    startCursorSoloTimer();
+  } else {
+    clearCursorSoloTimer();
+  }
+}
+
+// § Settings — (re)starts the Cursor Solo Timeout countdown; always clears
+// any existing timer first, so calling this again (e.g. the setting
+// changing while already in cursor-only mode) restarts fresh under the new
+// duration rather than stacking timers. A no-op past the clear if the
+// setting is 'none' -- cursor-only mode then only ever ends manually, same
+// as before this feature existed.
+function startCursorSoloTimer() {
+  clearCursorSoloTimer();
+  if (cursorSoloTimeoutSeconds === 'none') return;
+  cursorSoloTimeoutHandle = setTimeout(() => {
+    cursorSoloTimeoutHandle = null;
+    if (cursorOnlyMode) toggleCursorOnlyMode();
+  }, cursorSoloTimeoutSeconds * 1000);
+}
+
+function clearCursorSoloTimer() {
+  if (cursorSoloTimeoutHandle !== null) {
+    clearTimeout(cursorSoloTimeoutHandle);
+    cursorSoloTimeoutHandle = null;
+  }
 }
 
 
@@ -2773,6 +2833,9 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   hiddenStreetNames = new Set();
   mapComplexityIndex = 0;
   cursorOnlyMode = false;
+  // A pending timeout from the discarded map must not fire later and touch
+  // whatever cursor-only state the new map ends up in.
+  clearCursorSoloTimer();
 
   // § Scale behavior / § Pan Behavior — reset the viewport to the anchor
   // POI at the default scale on every new search.
@@ -4841,6 +4904,9 @@ sdk.setCallBack(
     // § Editing the Map — x's own braille cell steps through Map Complexity,
     // same as the x keyboard hotkey (see the keydown handler).
     else if (byte6 === 0x2D) setMapComplexity((mapComplexityIndex + 1) % MAP_COMPLEXITY_LEVELS.length); // dots 1+3+4+6 (x)
+    // § Command / hotkey mapping — dots 3+5+6 toggle cursor-only mode, same
+    // as the 0 keyboard hotkey.
+    else if (byte6 === 0x34) toggleCursorOnlyMode(); // dots 3+5+6
     // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
     else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
     else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI
