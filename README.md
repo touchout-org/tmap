@@ -65,7 +65,7 @@ Top to bottom, left to right:
 * Below the search: H2 with the found address (anchor POI).
 * Below the H2: the visual representation of the map.
 * Immediately below the map: a print version of the message display (live ARIA region).
-* To the right of the map: a group called "Move Map," (panning controls) arranged in a plus sign, with North, South, East, and West buttons.
+* Panning has no on-screen control group — see [Pan Behavior](#pan-behavior) for the two ways it's actually done.
 
 ### Main Menu
 
@@ -190,7 +190,9 @@ Streets and POIs are fetched as-is from Overpass, with no automated cleanup, ded
 
 ## Pan Behavior
 
-Using pan controls (see [command mapping](#command--hotkey-mapping)), the display moves in the specified direction by the amount specified in Pan Amount (settings). The tactile display updates and the on-screen Pan Status announces "[distance] [direction] of [anchor POI]," following the [message display architecture](#message-display-architecture) (message field updates first, then pushes to the Dot Pad and triggers speech).
+Two ways to pan, both calling the same `panMap(direction)`: Ctrl+arrow (see [command mapping](#command--hotkey-mapping)) is the keyboard/screen-reader path, and a mouse-only visual affordance — a subtle bar along the middle of each edge of the map, brightening on hover, click to pan one step in that direction — is the pointer path. There used to be an on-screen "Move Map" button group serving both purposes; it was replaced by the edge bars specifically because a button group is screen-reader clutter *and* an unintuitive target for a sighted mouse user, when the actual affordance people reach for is "grab the edge of the map." The edge bars are deliberately excluded from the accessibility tree (`aria-hidden`, no `tabindex`/role, plus `#map`'s own `role="img"` already collapsing its children) — they exist only for pointer users; Ctrl+arrow remains the sole path for keyboard/screen-reader panning and is unaffected by any of this.
+
+Either way, the display moves in the specified direction by the amount specified in Pan Amount (settings). The tactile display updates and the on-screen Pan Status announces "[distance] [direction] of [anchor POI]," following the [message display architecture](#message-display-architecture) (message field updates first, then pushes to the Dot Pad and triggers speech).
 
 If a pan would move the view past the edge of the fetched data — the square region bounded by the POI distance threshold from the anchor POI, see [Data sources](#data-sources) — the pan is rejected: a tone plays (see [Sound cues](#sound-cues) and the message display reports "Edge of Map."
 

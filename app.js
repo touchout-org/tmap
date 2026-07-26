@@ -289,11 +289,6 @@ const btnConnect = document.getElementById('btn-connect');
 const mainMenuButton = document.getElementById('main-menu-button');
 const mainMenu = document.getElementById('main-menu');
 const scaleSelect = document.getElementById('scale-select');
-const btnPanNorth = document.getElementById('btn-pan-north');
-const btnPanSouth = document.getElementById('btn-pan-south');
-const btnPanEast = document.getElementById('btn-pan-east');
-const btnPanWest = document.getElementById('btn-pan-west');
-const panButtons = [btnPanNorth, btnPanSouth, btnPanEast, btnPanWest];
 const labelCheckboxes = {
   top: document.getElementById('label-top'),
   bottom: document.getElementById('label-bottom'),
@@ -543,6 +538,70 @@ const cursorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'circle
 cursorSvg.setAttribute('class', 'cursor');
 cursorSvg.setAttribute('r', CURSOR_SVG_RADIUS);
 cursorSvg.hidden = true;
+
+// § Pan Behavior — mouse-only visual affordance replacing the old on-screen
+// Move Map buttons: a subtle bar along the middle of each edge of the map,
+// brightening on hover, that pans the same single step a click on the old
+// buttons did. Deliberately invisible to assistive tech -- Ctrl+Arrow (see
+// the keydown handler below) is the keyboard/screen-reader path for panning
+// and is unaffected by any of this; #map's own role="img" already collapses
+// its children out of the accessibility tree, and aria-hidden here is just
+// explicit belt-and-suspenders documentation of that intent, not content
+// being hidden that AT users would otherwise need. Plain <rect>s with no
+// tabindex/role, so they're not independently focusable either. Persistent
+// elements re-appended each render (see positionPanEdgeBars/renderScene),
+// same pattern as cursorSvg above -- renderScene wipes and rebuilds #map's
+// entire content on every refresh, so anything meant to survive a render
+// has to be created once and re-attached, not left inline in markup.
+function createPanEdgeBar(direction) {
+  const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bar.setAttribute('class', 'pan-edge-bar');
+  bar.setAttribute('aria-hidden', 'true');
+  bar.setAttribute('rx', 4);
+  bar.addEventListener('click', () => panMap(direction));
+  return bar;
+}
+const panEdgeBarNorth = createPanEdgeBar('north');
+const panEdgeBarSouth = createPanEdgeBar('south');
+const panEdgeBarEast = createPanEdgeBar('east');
+const panEdgeBarWest = createPanEdgeBar('west');
+const panEdgeBars = [panEdgeBarNorth, panEdgeBarSouth, panEdgeBarEast, panEdgeBarWest];
+
+// Sizes/positions the four bars against the map's *current* drawable
+// sub-rectangle (see svgMapRect) -- not the fixed 600x400 canvas -- so they
+// track label zones shrinking/offsetting the map the same way streets and
+// the cursor already do. Each bar spans PAN_EDGE_BAR_LENGTH_FRACTION of its
+// edge's length, centered, at PAN_EDGE_BAR_THICKNESS thick.
+const PAN_EDGE_BAR_THICKNESS = 20; // 2 dots, see SVG_UNITS_PER_DOT
+const PAN_EDGE_BAR_LENGTH_FRACTION = 0.4;
+
+function positionPanEdgeBars() {
+  const rect = svgMapRect();
+
+  const hBarWidth = rect.width * PAN_EDGE_BAR_LENGTH_FRACTION;
+  const hBarX = rect.x + (rect.width - hBarWidth) / 2;
+  panEdgeBarNorth.setAttribute('x', hBarX);
+  panEdgeBarNorth.setAttribute('y', rect.y);
+  panEdgeBarNorth.setAttribute('width', hBarWidth);
+  panEdgeBarNorth.setAttribute('height', PAN_EDGE_BAR_THICKNESS);
+
+  panEdgeBarSouth.setAttribute('x', hBarX);
+  panEdgeBarSouth.setAttribute('y', rect.y + rect.height - PAN_EDGE_BAR_THICKNESS);
+  panEdgeBarSouth.setAttribute('width', hBarWidth);
+  panEdgeBarSouth.setAttribute('height', PAN_EDGE_BAR_THICKNESS);
+
+  const vBarHeight = rect.height * PAN_EDGE_BAR_LENGTH_FRACTION;
+  const vBarY = rect.y + (rect.height - vBarHeight) / 2;
+  panEdgeBarWest.setAttribute('x', rect.x);
+  panEdgeBarWest.setAttribute('y', vBarY);
+  panEdgeBarWest.setAttribute('width', PAN_EDGE_BAR_THICKNESS);
+  panEdgeBarWest.setAttribute('height', vBarHeight);
+
+  panEdgeBarEast.setAttribute('x', rect.x + rect.width - PAN_EDGE_BAR_THICKNESS);
+  panEdgeBarEast.setAttribute('y', vBarY);
+  panEdgeBarEast.setAttribute('width', PAN_EDGE_BAR_THICKNESS);
+  panEdgeBarEast.setAttribute('height', vBarHeight);
+}
 
 // § My Archives — captures everything needed to push the current map into
 // Map History or Saved Maps. Deliberately excludes display preferences
@@ -852,11 +911,6 @@ function setScaleIndex(newIndex) {
 scaleSelect.addEventListener('change', () => {
   setScaleIndex(Number(scaleSelect.value));
 });
-
-btnPanNorth.addEventListener('click', () => panMap('north'));
-btnPanSouth.addEventListener('click', () => panMap('south'));
-btnPanEast.addEventListener('click', () => panMap('east'));
-btnPanWest.addEventListener('click', () => panMap('west'));
 
 // § Braille labels — the checkboxes (living in the Settings dialog, under
 // its own "Braille Options" heading) are a live view of the shared
@@ -2733,7 +2787,6 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   cursorLon = lon;
   cursorSvg.hidden = false;
   scaleSelect.disabled = false;
-  panButtons.forEach((btn) => { btn.disabled = false; });
   btnEditMap.removeAttribute('aria-disabled');
   btnDropPin.disabled = false;
   btnDownloadSvg.removeAttribute('aria-disabled');
@@ -2836,6 +2889,11 @@ function renderScene(viewportBbox) {
   if (viewportBbox) {
     renderStreetsAndAnchor(svgNs, viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon);
     drawLabelContent(svgNs, computeLabelPlacements(), mapGridBounds());
+    // Pan edge bars, same "only once there's a real map" gating as the
+    // cursor below -- pre-search there's no meaningful sub-rect to size
+    // them against.
+    positionPanEdgeBars();
+    panEdgeBars.forEach((bar) => mapSvg.appendChild(bar));
     // Cursor is a single reused element, drawn last (on top). Only appended
     // once there's a real viewport/position -- cursorSvg.hidden doesn't
     // reliably suppress rendering for an SVG element, so keeping it out of

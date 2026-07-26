@@ -83,26 +83,6 @@ body {
   margin-top: 0.4rem;
 }
 
-/* § Screen Layout — "Move Map," arranged in a plus sign: N top-center,
-   W/E either side of the (empty) middle, S bottom-center. */
-#move-map {
-  display: grid;
-  grid-template-columns: repeat(3, 2.4rem);
-  grid-template-rows: repeat(3, 2.4rem);
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-#move-map button {
-  font-size: 0.7rem;
-  padding: 0;
-}
-
-#btn-pan-north { grid-column: 2; grid-row: 1; }
-#btn-pan-west  { grid-column: 1; grid-row: 2; }
-#btn-pan-east  { grid-column: 3; grid-row: 2; }
-#btn-pan-south { grid-column: 2; grid-row: 3; }
-
 #map {
   display: block;
   width: 100%;
@@ -128,6 +108,20 @@ body {
   fill: none;
   stroke: #c0392b;
   stroke-width: 1.5;
+}
+
+/* § Pan Behavior — mouse-only pan affordance (see createPanEdgeBar in
+   app.js); subtle by default, brightens on hover for obvious click
+   feedback. Intentionally invisible to assistive tech -- see the comment
+   above createPanEdgeBar for why. */
+#map .pan-edge-bar {
+  fill: #1a1a1a;
+  opacity: 0.12;
+  cursor: pointer;
+}
+
+#map .pan-edge-bar:hover {
+  opacity: 0.35;
 }
 
 /* § Braille labels — zones render as empty bordered regions until label
