@@ -4381,6 +4381,17 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  // § Editing the Map — x steps through the same MAP_COMPLEXITY_LEVELS
+  // ladder in decreasing-complexity order (index 0 -> 1 -> 2 -> 3), wrapping
+  // back to 0 (All streets and pathways) past the end -- a single command
+  // for "simplify one more step" instead of having to know which specific
+  // 1-4 level to jump to. Same map-loaded gating as 1-4 above.
+  if (event.key === 'x') {
+    event.preventDefault();
+    setMapComplexity((mapComplexityIndex + 1) % MAP_COMPLEXITY_LEVELS.length);
+    return;
+  }
+
   // § Command / hotkey mapping — 0 toggles cursor-only mode on/off.
   if (event.key === '0') {
     event.preventDefault();
@@ -4827,6 +4838,9 @@ sdk.setCallBack(
     else if (byte6 === 0x0D) toggleLabelZone('bottom');  // dots 1+3+4 (m)
     else if (byte6 === 0x3A) toggleLabelZone('left');    // dots 2+4+5+6 (w)
     else if (byte6 === 0x17) toggleLabelZone('right');   // dots 1+2+3+5 (r)
+    // § Editing the Map — x's own braille cell steps through Map Complexity,
+    // same as the x keyboard hotkey (see the keydown handler).
+    else if (byte6 === 0x2D) setMapComplexity((mapComplexityIndex + 1) % MAP_COMPLEXITY_LEVELS.length); // dots 1+3+4+6 (x)
     // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
     else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
     else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI

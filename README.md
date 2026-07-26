@@ -105,6 +105,7 @@ The following table specifies the functions that can be accessed from the app or
 | Map Complexity: Simplified neighborhoods | `2` | none |
 | Map Complexity: Major streets | `3` | none |
 | Map Complexity: Major highways | `4` | none |
+| Cycle Map Complexity (decreasing, wraps) | `x` | dots 1+3+4+6 (`x`) |
 | Toggle cursor-only mode | `0` | none |
 | Open Custom POI ("Drop Pin") dialog | `a` | none |
 | Next POI | `.` | dot 4 |
@@ -117,6 +118,8 @@ Every keyboard hotkey fires only on its exact key with no extra modifier held �
 Toggling a label setting from the keyboard reports the new state in the message field, in the form "top labels on/off" (etc.), which is mirrored to the Dot Pad message display. As with all message-display updates, the app-side field is the source of truth: it updates first, then pushes to the Dot Pad and triggers the ARIA live announcement — see [Message display architecture](#message-display-architecture).
 
 The 1-4 hotkeys jump straight to a Map Complexity level (see [Editing the Map](#editing-the-map)) without needing to open the Edit Map dialog, announcing "[level] visible." in the message field. If the dialog happens to be open, its Map Complexity radio button stays in sync no matter which path changed it.
+
+`x` (keyboard or Dot Pad, both the same command, sharing the letter's own braille cell — dots 1+3+4+6) steps through the same four levels one at a time in decreasing-complexity order (All streets and pathways → Simplified neighborhoods → Major streets → Major highways), wrapping back to All streets and pathways past the end — a single "simplify one more step" command instead of needing to know which specific 1-4 level to jump to. Same announcement and dialog-sync behavior as 1-4.
 
 `0` hides every currently-visible street and POI and shows only the cursor, announcing "Cursor only"; pressing it again restores exactly what was showing before (whatever combination of Visible/Hidden Streets, Hidden Features, and Map Complexity was already in effect), announcing "Features restored." This is a display-only override — it never changes any of that underlying state, and the on-screen POI list box keeps working normally throughout, since it's a navigation aid rather than a rendered map feature.
 
