@@ -221,7 +221,8 @@ body {
 #edit-map-dialog,
 #custom-poi-dialog,
 #save-map-dialog,
-#delete-saved-map-dialog {
+#delete-saved-map-dialog,
+#did-you-mean-dialog {
   border: 1px solid #999;
   border-radius: 4px;
   padding: 1rem 1.25rem;
@@ -274,6 +275,38 @@ body {
 .sort-header:hover,
 .sort-header:focus {
   text-decoration: underline;
+  outline: none;
+}
+
+/* § "Did you mean...?" dialog — each candidate is a button styled to read
+   as a link (looks/behaves like a link, but is a real <button> performing
+   an in-page action rather than navigating -- same reasoning as
+   .sort-header above, just without the bold weight that's specific to
+   column-header sort controls). */
+#did-you-mean-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+}
+
+#did-you-mean-list li {
+  margin: 0.3rem 0;
+}
+
+.candidate-link {
+  border: none;
+  background: none;
+  font: inherit;
+  color: #1155cc;
+  text-decoration: underline;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.candidate-link:hover,
+.candidate-link:focus {
+  color: #0d3d99;
   outline: none;
 }
 

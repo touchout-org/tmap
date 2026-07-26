@@ -306,6 +306,9 @@ const poiTooFarDialog = document.getElementById('poi-too-far-dialog');
 const poiTooFarMessage = document.getElementById('poi-too-far-message');
 const btnPoiShowAnyway = document.getElementById('btn-poi-show-anyway');
 const btnPoiCancel = document.getElementById('btn-poi-cancel');
+const didYouMeanDialog = document.getElementById('did-you-mean-dialog');
+const didYouMeanList = document.getElementById('did-you-mean-list');
+const btnDidYouMeanCancel = document.getElementById('btn-did-you-mean-cancel');
 const customPoiDialog = document.getElementById('custom-poi-dialog');
 const customPoiStatus = document.getElementById('custom-poi-status');
 const customPoiForm = document.getElementById('custom-poi-form');
@@ -1097,11 +1100,31 @@ async function runSearch(query) {
     setMessage(humanizeOsmError(err, 'address'));
     return;
   }
-  if (!place) {
-    setMessage('No results');
+
+  if (place) {
+    await proceedWithPlace(place, query);
     return;
   }
 
+  // § "Did you mean...?" — geocoding found nothing at all (not a partial
+  // match, which geocode() would already have returned as a real place).
+  // Falls back to Google Places Text Search, which is far more tolerant of
+  // typos/partial names than the Geocoder, and lets the user pick from
+  // ranked candidates instead of just failing. If the fallback search
+  // itself comes back empty too, that's reported the same as an ordinary
+  // no-match -- no dialog, just "No results".
+  const candidates = await searchPlacesTextFallback(query);
+  if (candidates.length === 0) {
+    setMessage('No results');
+    return;
+  }
+  showDidYouMeanDialog(candidates, query);
+}
+
+// Shared by a normal successful geocode() and by picking a candidate from
+// the "Did you mean...?" dialog -- both end up with a resolved place and
+// need to run the exact same anchor/additional-POI/too-far logic.
+async function proceedWithPlace(place, query) {
   // § Screen Layout — the edit field is only for entering a location to
   // search for; once one's been found, its job here is done.
   locationInput.value = '';
@@ -1130,6 +1153,38 @@ async function runSearch(query) {
 
   addAdditionalPoi(shortName, lat, lon);
 }
+
+// § "Did you mean...?" — up to 10 ranked candidates as buttons styled to
+// read as links (see .candidate-link in style.css); picking one dismisses
+// the dialog and proceeds exactly like a normal successful geocode, Cancel
+// dismisses it with no further action.
+let pendingDidYouMeanQuery = null;
+
+function showDidYouMeanDialog(candidates, query) {
+  pendingDidYouMeanQuery = query;
+  didYouMeanList.innerHTML = '';
+  candidates.forEach((candidate) => {
+    const li = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'candidate-link';
+    button.textContent = formatPlaceName(candidate);
+    button.addEventListener('click', () => {
+      didYouMeanDialog.close();
+      const forQuery = pendingDidYouMeanQuery;
+      pendingDidYouMeanQuery = null;
+      proceedWithPlace(candidate, forQuery);
+    });
+    li.appendChild(button);
+    didYouMeanList.appendChild(li);
+  });
+  didYouMeanDialog.showModal();
+}
+
+btnDidYouMeanCancel.addEventListener('click', () => {
+  didYouMeanDialog.close();
+  pendingDidYouMeanQuery = null;
+});
 
 // § POIs — fetches and displays a brand-new anchor, discarding whatever map
 // (and additional POIs) may already be showing. Used both for the very
@@ -2307,6 +2362,57 @@ function convertGoogleGeocodeResult(result) {
     lon: result.geometry.location.lng(),
     display_name: result.formatted_address,
     name: null,
+    address: {
+      house_number: components.street_number,
+      road: components.route,
+      city: components.locality || components.postal_town || components.sublocality,
+      state: components.administrative_area_level_1,
+      postcode: components.postal_code,
+      country: components.country
+    }
+  };
+}
+
+// § "Did you mean...?" — Google Places Text Search fallback, tried only
+// when geocode() found nothing at all. Far more tolerant of typos/partial
+// business names than the Geocoder, since it's a relevance-ranked search
+// rather than deterministic address resolution. Returns [] on zero
+// candidates *or* on any failure of the fallback search itself -- either
+// way the caller just falls back to the ordinary "No results" message,
+// same as if this fallback didn't exist; a failure here isn't worth its
+// own error message on top of the address lookup that already failed.
+async function searchPlacesTextFallback(query) {
+  try {
+    await loadGoogleMaps();
+    const { places } = await google.maps.places.Place.searchByText({
+      textQuery: query,
+      fields: ['displayName', 'formattedAddress', 'location', 'addressComponents'],
+      maxResultCount: 10
+    });
+    return (places || []).map(convertPlacesResult);
+  } catch (err) {
+    console.error('places text-search fallback failed:', err);
+    return [];
+  }
+}
+
+// Same target shape as convertGoogleGeocodeResult (see above), but reading
+// the Places (New) SDK's AddressComponent accessors -- .longText/.types,
+// not Geocoder's .long_name -- a different shape from the same-looking
+// "address_components" data, because this is a different Places API
+// service (places.googleapis.com) from the Geocoding API.
+function convertPlacesResult(place) {
+  const components = {};
+  for (const component of place.addressComponents || []) {
+    for (const type of component.types) {
+      components[type] = component.longText;
+    }
+  }
+  return {
+    lat: place.location.lat(),
+    lon: place.location.lng(),
+    display_name: place.formattedAddress,
+    name: place.displayName || null,
     address: {
       house_number: components.street_number,
       road: components.route,
