@@ -369,6 +369,9 @@ const btnReleaseNotes = document.getElementById('menu-release-notes');
 const releaseNotesDialog = document.getElementById('release-notes-dialog');
 const releaseNotesContent = document.getElementById('release-notes-content');
 const btnReleaseNotesClose = document.getElementById('btn-release-notes-close');
+const streetListDialog = document.getElementById('street-list-dialog');
+const streetListContent = document.getElementById('street-list-content');
+const btnStreetListClose = document.getElementById('btn-street-list-close');
 
 let hasAnchor = false;
 
@@ -4410,6 +4413,92 @@ function changeScale(delta) {
 // Menu's own arrow/Home/End/Escape keys (see openMainMenu et al. above)
 // would otherwise fire alongside the map's arrow-key cursor movement while
 // a menu item has focus.
+// § Visible Streets List (Issue #1's "map key") — does any segment of a
+// way's geometry actually cross into the current viewport rect, in plain
+// lon/lat space? Reuses the Liang-Barsky clip already written for pixel
+// rasterization (see clipSegmentToRect) rather than a separate geometry
+// check -- it's a generic rectangle-clip, so feeding it lon/lat instead of
+// device pixels works identically. visibleWays()/visiblePois() alone only
+// know about Map Complexity/Hidden Features, not panning/zoom, so this is
+// the missing third filter.
+function wayIntersectsViewport(way, bbox) {
+  if (!way.geometry || way.geometry.length < 2) return false;
+  let prev = null;
+  for (const pt of way.geometry) {
+    if (prev && clipSegmentToRect(prev.lon, prev.lat, pt.lon, pt.lat, bbox.west, bbox.south, bbox.east, bbox.north)) {
+      return true;
+    }
+    prev = pt;
+  }
+  return false;
+}
+
+function poiInViewport(poi, bbox) {
+  return poi.lon >= bbox.west && poi.lon <= bbox.east && poi.lat >= bbox.south && poi.lat <= bbox.north;
+}
+
+// § Visible Streets List — every POI and distinct street name currently
+// visible in the viewport, POIs first (list order, anchor included),
+// streets alphabetical by their full/raw name (not the compacted stem --
+// the point of this list is showing the complete name behind an
+// abbreviation, per Issue #1). A street's label comes from
+// assignBrailleLabels(allNamesSorted()), the exact same call the tactile
+// map's own label placement uses, so this list never disagrees with what's
+// actually labeled on the map. Streets are deduped by name since OSM splits
+// one street into many way segments at each intersection.
+function computeVisibleStreetListEntries() {
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return { pois: [], streets: [] };
+
+  const pois = visiblePois().filter((poi) => poiInViewport(poi, viewportBbox));
+
+  const visibleNames = new Set();
+  for (const way of visibleWays()) {
+    const name = way.tags && way.tags.name;
+    if (name && wayIntersectsViewport(way, viewportBbox)) visibleNames.add(name);
+  }
+  const labels = assignBrailleLabels(allNamesSorted());
+  const streets = Array.from(visibleNames)
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => ({ label: labels.get(name) || '', name }));
+
+  return { pois, streets };
+}
+
+// § Visible Streets List — opens with a plain on-screen list for now (no
+// braille translation or tactile rendering yet -- that's a later step).
+// POIs show a filled-square marker glyph in place of a label, since a POI
+// never gets one of the map's 3-character street labels. Falls back to an
+// explicit "nothing visible" message rather than an empty dialog, per
+// Issue #1's explicit ask for graceful handling of that case (e.g.
+// cursor-only mode, or a complexity level that hides everything).
+function openStreetListDialog() {
+  if (streetListDialog.open) return;
+  const { pois, streets } = computeVisibleStreetListEntries();
+  streetListContent.innerHTML = '';
+  if (pois.length === 0 && streets.length === 0) {
+    const p = document.createElement('p');
+    p.textContent = 'No streets or POIs are currently visible.';
+    streetListContent.appendChild(p);
+  } else {
+    const list = document.createElement('ul');
+    for (const poi of pois) {
+      const li = document.createElement('li');
+      li.textContent = `■ -- ${poi.name}`;
+      list.appendChild(li);
+    }
+    for (const street of streets) {
+      const li = document.createElement('li');
+      li.textContent = `${street.label} -- ${street.name}`;
+      list.appendChild(li);
+    }
+    streetListContent.appendChild(list);
+  }
+  streetListDialog.showModal();
+}
+
+btnStreetListClose.addEventListener('click', () => streetListDialog.close());
+
 const FORM_CONTROL_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 function isFormControlFocused() {
   const focused = document.activeElement;
@@ -4438,6 +4527,12 @@ function isExactModifiers(event, { ctrl = false, alt = false, meta = false, shif
 document.addEventListener('keydown', (event) => {
   if (isFormControlFocused()) return;
 
+  // § Visible Streets List — while the dialog is open, every other hotkey
+  // is suppressed so the underlying map can't change state out from under
+  // the list; Escape still closes it, since that's the browser's own
+  // native <dialog> behavior, not something this handler needs to do.
+  if (streetListDialog.open) return;
+
   // Ctrl+arrow pans (and only Ctrl+arrow -- Ctrl+Shift+arrow, Ctrl+Alt+
   // arrow, etc. are left alone); this is checked ahead of the general
   // "no modifiers at all" guard below since it's the one hotkey in this
@@ -4460,6 +4555,15 @@ document.addEventListener('keydown', (event) => {
   if (labelZoneKeys[event.key]) {
     event.preventDefault();
     toggleLabelZone(labelZoneKeys[event.key]);
+    return;
+  }
+
+  // § Visible Streets List — / opens the dialog regardless of whether a
+  // map is loaded yet, same as the label-zone toggles above; with no map
+  // it just shows the "nothing visible" fallback rather than doing nothing.
+  if (event.key === '/') {
+    event.preventDefault();
+    openStreetListDialog();
     return;
   }
 
@@ -4912,6 +5016,13 @@ sdk.setCallBack(
   },
   (device, keyCode, msg) => {
     const byte6 = labelToByte6(msg || keyCode);
+    // § Visible Streets List — while the dialog is open, only the dots
+    // 1+2+3+4+5+6 "close everything" combo does anything; every other Dot
+    // Pad combo is suppressed, same reasoning as the keyboard guard above.
+    if (streetListDialog.open) {
+      if (byte6 === 0x3F) streetListDialog.close();
+      return;
+    }
     // § Command / hotkey mapping — cursor: single dots 3/2/5/6.
     if (byte6 === 0x04) moveCursor(-1, 0);       // dot3 alone -> left
     else if (byte6 === 0x20) moveCursor(1, 0);   // dot6 alone -> right
@@ -4947,6 +5058,9 @@ sdk.setCallBack(
     // virtual message window forward/back.
     else if (byte6 === 0x38) showNextMessageChunk();      // dots 4+5+6
     else if (byte6 === 0x07) showPreviousMessageChunk();  // dots 1+2+3
+    // § Visible Streets List — dots 3+4 open the dialog, same as / on the
+    // keyboard.
+    else if (byte6 === 0x0C) openStreetListDialog();      // dots 3+4
   }
 );
 
