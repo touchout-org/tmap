@@ -4529,7 +4529,7 @@ function wrapEntryLines(cells, wordBreaks) {
 // setting, via the same translateCurrentCodeWithBreaks the message display
 // uses, so continuation wrapping gets real word-boundary information.
 function buildStreetListEntryLines(prefixCells, name, marker) {
-  const { cells: restCells, wordBreaks: restBreaks } = translateCurrentCodeWithBreaks(' -- ' + name);
+  const { cells: restCells, wordBreaks: restBreaks } = translateCurrentCodeWithBreaks('--' + name);
   const cells = [...prefixCells, ...restCells];
   const wordBreaks = [0, prefixCells.length, ...restBreaks.map((b) => b + prefixCells.length)];
   const lines = wrapEntryLines(cells, wordBreaks);
@@ -4667,12 +4667,12 @@ function openStreetListDialog() {
     const list = document.createElement('ul');
     for (const poi of pois) {
       const li = document.createElement('li');
-      li.textContent = `■ -- ${poi.name}`;
+      li.textContent = `■--${poi.name}`;
       list.appendChild(li);
     }
     for (const street of streets) {
       const li = document.createElement('li');
-      li.textContent = `${street.label} -- ${street.name}`;
+      li.textContent = `${street.label}--${street.name}`;
       list.appendChild(li);
     }
     streetListContent.appendChild(list);
