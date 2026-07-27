@@ -4460,7 +4460,7 @@ function computeVisibleStreetListEntries() {
   const labels = assignBrailleLabels(allNamesSorted());
   const streets = Array.from(visibleNames)
     .sort((a, b) => a.localeCompare(b))
-    .map((name) => ({ label: labels.get(name) || '', name }));
+    .map((name) => ({ label: labels.get(name) || '', name: compactedDisplayName(name) }));
 
   return { pois, streets };
 }
@@ -4471,7 +4471,8 @@ function computeVisibleStreetListEntries() {
 // has no built-in separation between cells the way a real segmented
 // braille display does, so without it adjacent letters can blur together).
 // Stacked lines are a new case with no prior precedent (labels are always a
-// single row); per explicit direction, lines keep at least a 2-dot gap.
+// single row); see the line-pitch constants below for why their gap is
+// smaller than it first looks.
 // Both max-per-screen figures are derived, not hardcoded, so they stay
 // correct if DOT_GRID_WIDTH/HEIGHT or either gap ever changes: N whole
 // pitches fit against a total budget of (total + gap) dots, since the very
@@ -4482,8 +4483,17 @@ const LIST_CHAR_PITCH_DOTS = LIST_CHAR_WIDTH_DOTS + LIST_CHAR_GAP_DOTS;
 const LIST_CHARS_PER_LINE = Math.floor((DOT_GRID_WIDTH + LIST_CHAR_GAP_DOTS) / LIST_CHAR_PITCH_DOTS);
 const LIST_CONTINUATION_INDENT_CHARS = 3;
 
+// § Visible Streets List — the cell height reserves a 4th dot-row for 8-dot
+// computer braille (dots 7/8), but 6-dot literary braille (Grade 1/2 --
+// this list's own translated text almost always is one of those) never
+// sets that row, so it's already blank every time. An explicit 1-dot gap
+// on top of that gives 6-dot text 2 blank rows between lines total without
+// double-counting the row the content itself already leaves empty. 8-dot
+// computer braille can actually use that 4th row, so its own effective gap
+// is smaller -- expected, not re-tuned for here per explicit direction to
+// check that case separately.
 const LIST_LINE_HEIGHT_DOTS = 4;
-const LIST_LINE_GAP_DOTS = 2;
+const LIST_LINE_GAP_DOTS = 1;
 const LIST_LINE_PITCH_DOTS = LIST_LINE_HEIGHT_DOTS + LIST_LINE_GAP_DOTS;
 const LIST_LINES_PER_PAGE = Math.floor((DOT_GRID_HEIGHT + LIST_LINE_GAP_DOTS) / LIST_LINE_PITCH_DOTS);
 
