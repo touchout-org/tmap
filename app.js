@@ -365,6 +365,10 @@ const btnHelp = document.getElementById('menu-help');
 const helpDialog = document.getElementById('help-dialog');
 const helpContent = document.getElementById('help-content');
 const btnHelpClose = document.getElementById('btn-help-close');
+const btnReleaseNotes = document.getElementById('menu-release-notes');
+const releaseNotesDialog = document.getElementById('release-notes-dialog');
+const releaseNotesContent = document.getElementById('release-notes-content');
+const btnReleaseNotesClose = document.getElementById('btn-release-notes-close');
 
 let hasAnchor = false;
 
@@ -1118,6 +1122,32 @@ btnHelp.addEventListener('click', async () => {
 });
 
 btnHelpClose.addEventListener('click', () => helpDialog.close());
+
+// § Release Notes — same fetch-once-and-cache pattern as Help above, its own
+// static file (release-notes.html) so new entries can be appended without
+// touching index.html or app.js.
+let releaseNotesHtml = null;
+
+btnReleaseNotes.addEventListener('click', async () => {
+  closeMainMenu({ focusButton: true });
+  if (releaseNotesHtml === null) {
+    releaseNotesContent.textContent = 'Loading release notes…';
+    releaseNotesDialog.showModal();
+    try {
+      const res = await fetch('release-notes.html');
+      if (!res.ok) throw new Error('release-notes-failed');
+      releaseNotesHtml = await res.text();
+    } catch (err) {
+      releaseNotesContent.textContent = 'Could not load release notes.';
+      return;
+    }
+  } else {
+    releaseNotesDialog.showModal();
+  }
+  releaseNotesContent.innerHTML = releaseNotesHtml;
+});
+
+btnReleaseNotesClose.addEventListener('click', () => releaseNotesDialog.close());
 
 // § Braille labels — shared toggle used by both the dialog checkboxes and
 // the i/j/k/l hotkeys. Reports the new state in the message field per
