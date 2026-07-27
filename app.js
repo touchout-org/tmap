@@ -4831,6 +4831,14 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  // § Density metric (experimental) — g prints the whitespace-gap stats
+  // (average block size, standard deviation) to the message field.
+  if (event.key === 'g') {
+    event.preventDefault();
+    showWhitespaceStats();
+    return;
+  }
+
   // § Additional POIs — a opens the Custom POI ("Drop Pin") dialog.
   if (event.key === 'a') {
     event.preventDefault();
@@ -5195,6 +5203,85 @@ function showMapDensity() {
   setMessage(`Density: ${percent}%`);
 }
 
+// § Density metric (experimental) — a second candidate metric: instead of
+// overall ink coverage, this looks at the size distribution of the gaps
+// between streets. Every maximal contiguous block of whitespace (unraised
+// pixels, same classification as computeMapDensityPercent's numerator --
+// i.e. streets/anchor/POIs/cursor are all "ink," everything else is
+// candidate whitespace) within mapGridBounds is found via a 4-connected
+// flood fill (up/down/left/right only, no diagonals) -- deliberately not
+// 8-connected, since a steep Bresenham-drawn street segment often has
+// consecutive pixels touching only at a corner; an 8-connected background
+// fill would leak through that corner and incorrectly merge the gaps on
+// either side of a wall that's actually there. mapGridBounds' own edges
+// are themselves a hard boundary a block can never extend past, per
+// explicit direction -- naturally satisfied here since the fill never
+// looks outside the region's own width/height in the first place.
+// Iterative (explicit stack, no recursion) -- irrelevant at this grid's
+// size (at most 2400 pixels) but matches this file's existing style of
+// avoiding recursion for pixel-grid work.
+function computeWhitespaceBlockAreas() {
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return null;
+  const b = mapGridBounds();
+  const cursor = cursorGridPosition(viewportBbox);
+  const pixels = rasterizeMapToPixels(viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon, DOT_GRID_WIDTH, DOT_GRID_HEIGHT, cursor);
+  const isInk = (x, y) => !!pixels[(b.offsetY + y) * DOT_GRID_WIDTH + (b.offsetX + x)];
+
+  const visited = new Uint8Array(b.width * b.height);
+  const areas = [];
+  const stack = [];
+  for (let sy = 0; sy < b.height; sy++) {
+    for (let sx = 0; sx < b.width; sx++) {
+      const startIdx = sy * b.width + sx;
+      if (visited[startIdx] || isInk(sx, sy)) { visited[startIdx] = 1; continue; }
+      visited[startIdx] = 1;
+      stack.length = 0;
+      stack.push(sx, sy);
+      let area = 0;
+      while (stack.length > 0) {
+        const y = stack.pop();
+        const x = stack.pop();
+        area++;
+        const neighbors = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+        for (const [nx, ny] of neighbors) {
+          if (nx < 0 || nx >= b.width || ny < 0 || ny >= b.height) continue;
+          const nIdx = ny * b.width + nx;
+          if (visited[nIdx]) continue;
+          visited[nIdx] = 1;
+          if (isInk(nx, ny)) continue;
+          stack.push(nx, ny);
+        }
+      }
+      areas.push(area);
+    }
+  }
+  return areas;
+}
+
+// § Density metric (experimental) — mean and population standard
+// deviation (divide by N, not N-1 -- this is the complete set of blocks
+// currently visible, not a sample estimating some larger population) of
+// the whitespace block areas found above.
+function computeWhitespaceStats() {
+  const areas = computeWhitespaceBlockAreas();
+  if (areas === null) return null;
+  if (areas.length === 0) return { count: 0, average: 0, stdDev: 0 };
+  const n = areas.length;
+  const mean = areas.reduce((sum, a) => sum + a, 0) / n;
+  const variance = areas.reduce((sum, a) => sum + (a - mean) ** 2, 0) / n;
+  return { count: n, average: mean, stdDev: Math.sqrt(variance) };
+}
+
+// § Density metric (experimental) — g prints the whitespace-gap stats to
+// the message field, same overwrite-whatever-was-there behavior as any
+// other message.
+function showWhitespaceStats() {
+  const stats = computeWhitespaceStats();
+  if (stats === null) return;
+  setMessage(`Avg gap: ${stats.average.toFixed(1)}px, Std dev: ${stats.stdDev.toFixed(1)}px`);
+}
+
 function sendTestGridToDevice(device) {
   const numCols = device.numberCellColumns;
   const numRows = device.numberCellRows;
@@ -5334,6 +5421,9 @@ sdk.setCallBack(
     // § Density metric (experimental) — d's own braille cell (dots 1+4+5),
     // same convention as u/m/w/r/x above, same as the d keyboard hotkey.
     else if (byte6 === 0x19) showMapDensity(); // dots 1+4+5 (d)
+    // § Density metric (experimental) — g's own braille cell (dots
+    // 1+2+4+5), same convention, same as the g keyboard hotkey.
+    else if (byte6 === 0x1B) showWhitespaceStats(); // dots 1+2+4+5 (g)
     // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
     else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
     else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI
