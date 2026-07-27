@@ -4413,7 +4413,7 @@ function changeScale(delta) {
 // Menu's own arrow/Home/End/Escape keys (see openMainMenu et al. above)
 // would otherwise fire alongside the map's arrow-key cursor movement while
 // a menu item has focus.
-// § Visible Streets List (Issue #1's "map key") — does any segment of a
+// § Street Abbreviation Key (Issue #1's "map key") — does any segment of a
 // way's geometry actually cross into the current viewport rect, in plain
 // lon/lat space? Reuses the Liang-Barsky clip already written for pixel
 // rasterization (see clipSegmentToRect) rather than a separate geometry
@@ -4437,7 +4437,7 @@ function poiInViewport(poi, bbox) {
   return poi.lon >= bbox.west && poi.lon <= bbox.east && poi.lat >= bbox.south && poi.lat <= bbox.north;
 }
 
-// § Visible Streets List — every POI and distinct street name currently
+// § Street Abbreviation Key — every POI and distinct street name currently
 // visible in the viewport, POIs first (list order, anchor included),
 // streets alphabetical by their full/raw name (not the compacted stem --
 // the point of this list is showing the complete name behind an
@@ -4465,7 +4465,7 @@ function computeVisibleStreetListEntries() {
   return { pois, streets };
 }
 
-// § Visible Streets List / tactile rendering — dot-pitch constants for
+// § Street Abbreviation Key / tactile rendering — dot-pitch constants for
 // laying text out on the graphics display. Characters get the same 1-dot
 // gap street labels already use (2-dot-wide cell + 1-dot gap -- a pin grid
 // has no built-in separation between cells the way a real segmented
@@ -4483,7 +4483,7 @@ const LIST_CHAR_PITCH_DOTS = LIST_CHAR_WIDTH_DOTS + LIST_CHAR_GAP_DOTS;
 const LIST_CHARS_PER_LINE = Math.floor((DOT_GRID_WIDTH + LIST_CHAR_GAP_DOTS) / LIST_CHAR_PITCH_DOTS);
 const LIST_CONTINUATION_INDENT_CHARS = 3;
 
-// § Visible Streets List — the cell height reserves a 4th dot-row for 8-dot
+// § Street Abbreviation Key — the cell height reserves a 4th dot-row for 8-dot
 // computer braille (dots 7/8), but 6-dot literary braille (Grade 1/2 --
 // this list's own translated text almost always is one of those) never
 // sets that row, so it's already blank every time. An explicit 1-dot gap
@@ -4497,7 +4497,7 @@ const LIST_LINE_GAP_DOTS = 1;
 const LIST_LINE_PITCH_DOTS = LIST_LINE_HEIGHT_DOTS + LIST_LINE_GAP_DOTS;
 const LIST_LINES_PER_PAGE = Math.floor((DOT_GRID_HEIGHT + LIST_LINE_GAP_DOTS) / LIST_LINE_PITCH_DOTS);
 
-// § Visible Streets List — wraps one entry's cells (a 3-cell prefix --
+// § Street Abbreviation Key — wraps one entry's cells (a 3-cell prefix --
 // either a street's label or 3 blank placeholder cells for a POI's marker
 // -- concatenated with " -- " + the translated name) into as many physical
 // lines as it takes, breaking at a word boundary the same way the message
@@ -4518,7 +4518,7 @@ function wrapEntryLines(cells, wordBreaks) {
   return lines;
 }
 
-// § Visible Streets List — one entry (POI or street) as physical lines.
+// § Street Abbreviation Key — one entry (POI or street) as physical lines.
 // prefixCells is always exactly 3 cells: a street's real label (raw NABCC,
 // same as the map's own tactile labels -- never run through the current
 // Braille Translation setting, so this list's abbreviation column always
@@ -4537,7 +4537,7 @@ function buildStreetListEntryLines(prefixCells, name, marker) {
   return lines;
 }
 
-// § Visible Streets List — every entry's physical lines, flattened into one
+// § Street Abbreviation Key — every entry's physical lines, flattened into one
 // sequence: POIs first (3 blank prefix cells, marker flagged on each one's
 // first line), then streets (their real label as the prefix).
 function buildStreetListPhysicalLines(pois, streets) {
@@ -4551,7 +4551,33 @@ function buildStreetListPhysicalLines(pois, streets) {
   return lines;
 }
 
-// § Visible Streets List — groups physical lines into LIST_LINES_PER_PAGE-
+// § Street Abbreviation Key — the three usage-hint lines shown once, at the
+// very top of the tactile list only (not the on-screen dialog -- these are
+// Dot Pad-specific key instructions, meaningless without a device). Always
+// indented 3 columns like a continuation line, rather than embedding
+// literal leading spaces in the translated text -- reuses the exact same
+// indent mechanism drawStreetListLineToPixels already applies for
+// continuation, instead of spending translated cells on blank space. Each
+// hint is wrapped independently at the continuation width in case a future
+// braille code ever needs more than one physical line for one of these
+// (comfortably under it for all three current codes).
+function buildStreetListHeaderLines() {
+  const hints = ['123 scrolls up', '456 scrolls down', 'All keys exits.'];
+  const width = LIST_CHARS_PER_LINE - LIST_CONTINUATION_INDENT_CHARS;
+  const lines = [];
+  for (const hint of hints) {
+    const { cells, wordBreaks } = translateCurrentCodeWithBreaks(hint);
+    let pos = 0;
+    do {
+      const end = chunkEndPosition(cells.length, pos, wordBreaks, width);
+      lines.push({ cells: cells.slice(pos, end), continuation: true });
+      pos = end;
+    } while (pos < cells.length);
+  }
+  return lines;
+}
+
+// § Street Abbreviation Key — groups physical lines into LIST_LINES_PER_PAGE-
 // line screens (what dots 4+5+6 / 1+2+3 page between). Always at least one
 // page, even if it's empty, so sendStreetListPageToDevice has something to
 // render (a blank display) instead of needing its own empty-list check.
@@ -4563,7 +4589,7 @@ function pageStreetListLines(lines) {
   return pages.length > 0 ? pages : [[]];
 }
 
-// § Visible Streets List — an 8-dot cell's dot positions within its own 2
+// § Street Abbreviation Key — an 8-dot cell's dot positions within its own 2
 // (dot-column) x 4 (dot-row) cell, decoded from an already-translated cell
 // byte (not a character -- see labelCharacterDots for the character/NABCC
 // version this parallels). Extends label rendering's 6-dot version with
@@ -4579,7 +4605,7 @@ function cellDotPositions(byte) {
   return dots;
 }
 
-// § Visible Streets List — draws one physical line into the pixel buffer at
+// § Street Abbreviation Key — draws one physical line into the pixel buffer at
 // its row (rowIndex * LIST_LINE_PITCH_DOTS). A continuation line's cells
 // start LIST_CONTINUATION_INDENT_CHARS columns in. A marker line skips
 // decoding its first 3 (blank) cells as characters and instead draws the
@@ -4603,7 +4629,7 @@ function drawStreetListLineToPixels(pixels, w, h, line, rowIndex, scaleX, scaleY
   }
 }
 
-// § Visible Streets List — module state for the tactile side: every
+// § Street Abbreviation Key — module state for the tactile side: every
 // physical line, paginated, and which page is currently on the device.
 // Rebuilt from scratch each time the dialog opens (see openStreetListDialog)
 // rather than incrementally maintained, since the underlying map state
@@ -4648,13 +4674,16 @@ function showPreviousStreetListPage() {
   }
 }
 
-// § Visible Streets List — builds both the plain on-screen list and the
+// § Street Abbreviation Key — builds both the plain on-screen list and the
 // paginated tactile version from the same computeVisibleStreetListEntries
 // result, so the two can never disagree about what's currently visible.
 // Falls back to an explicit "nothing visible" message rather than an empty
 // dialog, per Issue #1's explicit ask for graceful handling of that case
 // (e.g. cursor-only mode, or a complexity level that hides everything) --
-// the tactile side gets an empty (blank) page the same way.
+// the tactile side gets an empty (blank) page the same way. The tactile
+// side alone also gets the 3 usage-hint lines prepended at the very top,
+// even in the nothing-visible case, since they're about navigating this
+// view itself, not about what's in it.
 function openStreetListDialog() {
   if (streetListDialog.open) return;
   const { pois, streets } = computeVisibleStreetListEntries();
@@ -4677,7 +4706,8 @@ function openStreetListDialog() {
     }
     streetListContent.appendChild(list);
   }
-  streetListPages = pageStreetListLines(buildStreetListPhysicalLines(pois, streets));
+  const lines = [...buildStreetListHeaderLines(), ...buildStreetListPhysicalLines(pois, streets)];
+  streetListPages = pageStreetListLines(lines);
   streetListPageIndex = 0;
   sendStreetListPageToDevice();
   streetListDialog.showModal();
@@ -4685,7 +4715,7 @@ function openStreetListDialog() {
 
 btnStreetListClose.addEventListener('click', () => streetListDialog.close());
 
-// § Visible Streets List — fires on every close path (Close button,
+// § Street Abbreviation Key — fires on every close path (Close button,
 // Escape, or the dots-1-6 combo below), so the map is put back on the
 // device exactly once no matter which one the user used, per the "keep the
 // map ready to display again when the list is dismissed" requirement.
@@ -4721,7 +4751,7 @@ function isExactModifiers(event, { ctrl = false, alt = false, meta = false, shif
 document.addEventListener('keydown', (event) => {
   if (isFormControlFocused()) return;
 
-  // § Visible Streets List — while the dialog is open, every other hotkey
+  // § Street Abbreviation Key — while the dialog is open, every other hotkey
   // is suppressed so the underlying map can't change state out from under
   // the list; Escape still closes it, since that's the browser's own
   // native <dialog> behavior, not something this handler needs to do.
@@ -4752,7 +4782,7 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  // § Visible Streets List — / opens the dialog regardless of whether a
+  // § Street Abbreviation Key — / opens the dialog regardless of whether a
   // map is loaded yet, same as the label-zone toggles above; with no map
   // it just shows the "nothing visible" fallback rather than doing nothing.
   if (event.key === '/') {
@@ -5210,7 +5240,7 @@ sdk.setCallBack(
   },
   (device, keyCode, msg) => {
     const byte6 = labelToByte6(msg || keyCode);
-    // § Visible Streets List — while the dialog is open, dots 4+5+6 / 1+2+3
+    // § Street Abbreviation Key — while the dialog is open, dots 4+5+6 / 1+2+3
     // page the list (reusing the message window's own combos -- see
     // showNextStreetListPage/showPreviousStreetListPage) and dots 1+2+3+4+
     // 5+6 close it; every other Dot Pad combo is suppressed, same reasoning
@@ -5256,7 +5286,7 @@ sdk.setCallBack(
     // virtual message window forward/back.
     else if (byte6 === 0x38) showNextMessageChunk();      // dots 4+5+6
     else if (byte6 === 0x07) showPreviousMessageChunk();  // dots 1+2+3
-    // § Visible Streets List — dots 3+4 open the dialog, same as / on the
+    // § Street Abbreviation Key — dots 3+4 open the dialog, same as / on the
     // keyboard.
     else if (byte6 === 0x0C) openStreetListDialog();      // dots 3+4
   }
