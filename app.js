@@ -4077,7 +4077,7 @@ function buildExportSvg() {
     const name = way.tags && way.tags.name;
     if (!name || !way.geometry || way.geometry.length < 2) continue;
     const highway = (way.tags && way.tags.highway) || '';
-    const key = `${name} ${highway} ${way.tier}`;
+    const key = `${name} ${highway} ${way.tier}`;
     if (!groups.has(key)) groups.set(key, { name, highway, tier: way.tier, ways: [] });
     groups.get(key).ways.push(way);
   }
@@ -4823,6 +4823,14 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  // § Density metric (experimental) — d prints the current density
+  // reading to the message field.
+  if (event.key === 'd') {
+    event.preventDefault();
+    showMapDensity();
+    return;
+  }
+
   // § Additional POIs — a opens the Custom POI ("Drop Pin") dialog.
   if (event.key === 'a') {
     event.preventDefault();
@@ -5143,6 +5151,50 @@ function sendGraphicToDevice(device, { skipClear = false } = {}) {
   sendPixelsToDevice(device, pixels, numCols, numRows, { skipClear });
 }
 
+// § Density metric (experimental) — the percentage of "raised" pixels
+// within the map's own drawable region (mapGridBounds -- the same
+// effective area the tactile map itself draws into, which shrinks when a
+// label zone is active) out of every pixel in that region. Reuses the
+// exact same rasterization the tactile display already sends
+// (rasterizeMapToPixels) at the fixed DOT_GRID_WIDTH/HEIGHT logical
+// resolution (independent of any connected device's own reported
+// resolution, since this describes the current map view, not a specific
+// device), then sums only within mapGridBounds' own rectangle -- an active
+// label zone's pixels live entirely outside that rectangle by
+// construction, so they're excluded without needing a separate
+// labels-free rasterization path. Counts everything the rasterizer draws
+// there: streets, the anchor, every POI, and the cursor -- not just
+// streets, per explicit direction, so this really is "every map pixel
+// that isn't a label," not a street-only metric. This is purely a
+// real-time inspection tool for comparing candidate density metrics
+// (see Issue discussion) -- nothing here drives any automatic
+// simplification.
+function computeMapDensityPercent() {
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return null;
+  const b = mapGridBounds();
+  const cursor = cursorGridPosition(viewportBbox);
+  const pixels = rasterizeMapToPixels(viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon, DOT_GRID_WIDTH, DOT_GRID_HEIGHT, cursor);
+  let raised = 0;
+  for (let y = b.offsetY; y < b.offsetY + b.height; y++) {
+    for (let x = b.offsetX; x < b.offsetX + b.width; x++) {
+      if (pixels[y * DOT_GRID_WIDTH + x]) raised++;
+    }
+  }
+  const total = b.width * b.height;
+  return total > 0 ? Math.round(100 * raised / total) : 0;
+}
+
+// § Density metric (experimental) — d prints the current density to the
+// message field, same as any other message (overwrites whatever was there
+// before, per standard message-display behavior). No-op with no map
+// loaded, same as computeMapDensityPercent's own guard.
+function showMapDensity() {
+  const percent = computeMapDensityPercent();
+  if (percent === null) return;
+  setMessage(`Density: ${percent}%`);
+}
+
 function sendTestGridToDevice(device) {
   const numCols = device.numberCellColumns;
   const numRows = device.numberCellRows;
@@ -5279,6 +5331,9 @@ sdk.setCallBack(
     // § Command / hotkey mapping — dots 3+5+6 toggle cursor-only mode, same
     // as the 0 keyboard hotkey.
     else if (byte6 === 0x34) toggleCursorOnlyMode(); // dots 3+5+6
+    // § Density metric (experimental) — d's own braille cell (dots 1+4+5),
+    // same convention as u/m/w/r/x above, same as the d keyboard hotkey.
+    else if (byte6 === 0x19) showMapDensity(); // dots 1+4+5 (d)
     // § Additional POIs — single dots 4/1, same as ./, on the keyboard.
     else if (byte6 === 0x08) navigatePoiList(1);   // dot4 alone -> next POI
     else if (byte6 === 0x01) navigatePoiList(-1);  // dot1 alone -> previous POI
