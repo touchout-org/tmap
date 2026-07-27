@@ -773,8 +773,8 @@ function translateCurrentCodeWithBreaks(text) {
 // just the first one. Falls back to a hard cut at exactly
 // MESSAGE_WINDOW_SIZE if no word boundary exists in the window (a
 // single word/token longer than the whole display).
-function chunkEndPosition(cellsLength, start, wordBreaks) {
-  const idealEnd = Math.min(start + MESSAGE_WINDOW_SIZE, cellsLength);
+function chunkEndPosition(cellsLength, start, wordBreaks, width = MESSAGE_WINDOW_SIZE) {
+  const idealEnd = Math.min(start + width, cellsLength);
   if (idealEnd >= cellsLength) return idealEnd;
   let best = idealEnd;
   let foundBreak = false;
@@ -4465,13 +4465,186 @@ function computeVisibleStreetListEntries() {
   return { pois, streets };
 }
 
-// § Visible Streets List — opens with a plain on-screen list for now (no
-// braille translation or tactile rendering yet -- that's a later step).
-// POIs show a filled-square marker glyph in place of a label, since a POI
-// never gets one of the map's 3-character street labels. Falls back to an
-// explicit "nothing visible" message rather than an empty dialog, per
-// Issue #1's explicit ask for graceful handling of that case (e.g.
-// cursor-only mode, or a complexity level that hides everything).
+// § Visible Streets List / tactile rendering — dot-pitch constants for
+// laying text out on the graphics display. Characters get the same 1-dot
+// gap street labels already use (2-dot-wide cell + 1-dot gap -- a pin grid
+// has no built-in separation between cells the way a real segmented
+// braille display does, so without it adjacent letters can blur together).
+// Stacked lines are a new case with no prior precedent (labels are always a
+// single row); per explicit direction, lines keep at least a 2-dot gap.
+// Both max-per-screen figures are derived, not hardcoded, so they stay
+// correct if DOT_GRID_WIDTH/HEIGHT or either gap ever changes: N whole
+// pitches fit against a total budget of (total + gap) dots, since the very
+// last one doesn't need a trailing gap after it.
+const LIST_CHAR_WIDTH_DOTS = 2;
+const LIST_CHAR_GAP_DOTS = 1;
+const LIST_CHAR_PITCH_DOTS = LIST_CHAR_WIDTH_DOTS + LIST_CHAR_GAP_DOTS;
+const LIST_CHARS_PER_LINE = Math.floor((DOT_GRID_WIDTH + LIST_CHAR_GAP_DOTS) / LIST_CHAR_PITCH_DOTS);
+const LIST_CONTINUATION_INDENT_CHARS = 3;
+
+const LIST_LINE_HEIGHT_DOTS = 4;
+const LIST_LINE_GAP_DOTS = 2;
+const LIST_LINE_PITCH_DOTS = LIST_LINE_HEIGHT_DOTS + LIST_LINE_GAP_DOTS;
+const LIST_LINES_PER_PAGE = Math.floor((DOT_GRID_HEIGHT + LIST_LINE_GAP_DOTS) / LIST_LINE_PITCH_DOTS);
+
+// § Visible Streets List — wraps one entry's cells (a 3-cell prefix --
+// either a street's label or 3 blank placeholder cells for a POI's marker
+// -- concatenated with " -- " + the translated name) into as many physical
+// lines as it takes, breaking at a word boundary the same way the message
+// window does (see chunkEndPosition). The first physical line gets the
+// full line width; every line after that reserves
+// LIST_CONTINUATION_INDENT_CHARS worth of blank leading columns, per spec,
+// so its available width is narrower.
+function wrapEntryLines(cells, wordBreaks) {
+  const lines = [];
+  let pos = 0;
+  do {
+    const continuation = lines.length > 0;
+    const width = continuation ? LIST_CHARS_PER_LINE - LIST_CONTINUATION_INDENT_CHARS : LIST_CHARS_PER_LINE;
+    const end = chunkEndPosition(cells.length, pos, wordBreaks, width);
+    lines.push({ cells: cells.slice(pos, end), continuation });
+    pos = end;
+  } while (pos < cells.length);
+  return lines;
+}
+
+// § Visible Streets List — one entry (POI or street) as physical lines.
+// prefixCells is always exactly 3 cells: a street's real label (raw NABCC,
+// same as the map's own tactile labels -- never run through the current
+// Braille Translation setting, so this list's abbreviation column always
+// matches what's actually labeled on the map) or 3 blank cells standing in
+// for a POI's marker glyph, drawn separately at render time (see
+// drawStreetListLineToPixels) since it isn't a braille character at all.
+// The name itself IS translated under the current Braille Translation
+// setting, via the same translateCurrentCodeWithBreaks the message display
+// uses, so continuation wrapping gets real word-boundary information.
+function buildStreetListEntryLines(prefixCells, name, marker) {
+  const { cells: restCells, wordBreaks: restBreaks } = translateCurrentCodeWithBreaks(' -- ' + name);
+  const cells = [...prefixCells, ...restCells];
+  const wordBreaks = [0, prefixCells.length, ...restBreaks.map((b) => b + prefixCells.length)];
+  const lines = wrapEntryLines(cells, wordBreaks);
+  if (marker && lines.length > 0) lines[0].marker = true;
+  return lines;
+}
+
+// § Visible Streets List — every entry's physical lines, flattened into one
+// sequence: POIs first (3 blank prefix cells, marker flagged on each one's
+// first line), then streets (their real label as the prefix).
+function buildStreetListPhysicalLines(pois, streets) {
+  const lines = [];
+  for (const poi of pois) {
+    lines.push(...buildStreetListEntryLines([0, 0, 0], poi.name, true));
+  }
+  for (const street of streets) {
+    lines.push(...buildStreetListEntryLines(textToNabccCells(street.label), street.name, false));
+  }
+  return lines;
+}
+
+// § Visible Streets List — groups physical lines into LIST_LINES_PER_PAGE-
+// line screens (what dots 4+5+6 / 1+2+3 page between). Always at least one
+// page, even if it's empty, so sendStreetListPageToDevice has something to
+// render (a blank display) instead of needing its own empty-list check.
+function pageStreetListLines(lines) {
+  const pages = [];
+  for (let i = 0; i < lines.length; i += LIST_LINES_PER_PAGE) {
+    pages.push(lines.slice(i, i + LIST_LINES_PER_PAGE));
+  }
+  return pages.length > 0 ? pages : [[]];
+}
+
+// § Visible Streets List — an 8-dot cell's dot positions within its own 2
+// (dot-column) x 4 (dot-row) cell, decoded from an already-translated cell
+// byte (not a character -- see labelCharacterDots for the character/NABCC
+// version this parallels). Extends label rendering's 6-dot version with
+// dots 7/8 (bottom row), since translated text (capital sign, number sign,
+// 8-dot computer braille) routinely uses them, unlike a label's own
+// letters/digits/dash.
+const LIST_CELL_DOT_BIT_POSITIONS = [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [0, 3], [1, 3]];
+function cellDotPositions(byte) {
+  const dots = [];
+  for (let bit = 0; bit < 8; bit++) {
+    if (byte & (1 << bit)) dots.push(LIST_CELL_DOT_BIT_POSITIONS[bit]);
+  }
+  return dots;
+}
+
+// § Visible Streets List — draws one physical line into the pixel buffer at
+// its row (rowIndex * LIST_LINE_PITCH_DOTS). A continuation line's cells
+// start LIST_CONTINUATION_INDENT_CHARS columns in. A marker line skips
+// decoding its first 3 (blank) cells as characters and instead draws the
+// real 3x3 POI marker (drawSquarePixels -- the exact same glyph the map
+// itself uses) centered in that same 3-character footprint, per explicit
+// direction to reuse the actual marker rather than a braille stand-in.
+function drawStreetListLineToPixels(pixels, w, h, line, rowIndex, scaleX, scaleY) {
+  const rowY = rowIndex * LIST_LINE_PITCH_DOTS;
+  const colOffset = line.continuation ? LIST_CONTINUATION_INDENT_CHARS : 0;
+  const startCellIndex = line.marker ? 3 : 0;
+  if (line.marker) {
+    const cx = 3; // centered in the 3-character (8-dot) prefix box, cols 0-7
+    const cy = rowY + 1;
+    drawSquarePixels(pixels, w, h, Math.round(cx * scaleX), Math.round(cy * scaleY));
+  }
+  for (let i = startCellIndex; i < line.cells.length; i++) {
+    const colX = (colOffset + i) * LIST_CHAR_PITCH_DOTS;
+    for (const [dx, dy] of cellDotPositions(line.cells[i])) {
+      setGridPixel(pixels, w, h, Math.round((colX + dx) * scaleX), Math.round((rowY + dy) * scaleY));
+    }
+  }
+}
+
+// § Visible Streets List — module state for the tactile side: every
+// physical line, paginated, and which page is currently on the device.
+// Rebuilt from scratch each time the dialog opens (see openStreetListDialog)
+// rather than incrementally maintained, since the underlying map state
+// (and thus what's visible) can't change while the dialog is open, per the
+// keyboard/Dot Pad guards below.
+let streetListPages = [[]];
+let streetListPageIndex = 0;
+
+function rasterizeStreetListPage(page, displayW, displayH) {
+  const pixels = new Uint8Array(displayW * displayH);
+  const scaleX = displayW / DOT_GRID_WIDTH;
+  const scaleY = displayH / DOT_GRID_HEIGHT;
+  page.forEach((line, rowIndex) => drawStreetListLineToPixels(pixels, displayW, displayH, line, rowIndex, scaleX, scaleY));
+  return pixels;
+}
+
+function sendStreetListPageToDevice() {
+  if (!currentDevice) return;
+  const numCols = currentDevice.numberCellColumns;
+  const numRows = currentDevice.numberCellRows;
+  const pixels = rasterizeStreetListPage(streetListPages[streetListPageIndex] || [], numCols * 2, numRows * 4);
+  sendPixelsToDevice(currentDevice, pixels, numCols, numRows);
+}
+
+// § Command / hotkey mapping — dots 4+5+6 / 1+2+3 page the Visible Streets
+// list forward/back while it's open, reusing the exact same combos (and
+// edge-tone-on-no-more-pages behavior) as the message window's own paging.
+function showNextStreetListPage() {
+  if (streetListPageIndex + 1 < streetListPages.length) {
+    streetListPageIndex++;
+    sendStreetListPageToDevice();
+  } else {
+    playEdgeTone();
+  }
+}
+function showPreviousStreetListPage() {
+  if (streetListPageIndex > 0) {
+    streetListPageIndex--;
+    sendStreetListPageToDevice();
+  } else {
+    playEdgeTone();
+  }
+}
+
+// § Visible Streets List — builds both the plain on-screen list and the
+// paginated tactile version from the same computeVisibleStreetListEntries
+// result, so the two can never disagree about what's currently visible.
+// Falls back to an explicit "nothing visible" message rather than an empty
+// dialog, per Issue #1's explicit ask for graceful handling of that case
+// (e.g. cursor-only mode, or a complexity level that hides everything) --
+// the tactile side gets an empty (blank) page the same way.
 function openStreetListDialog() {
   if (streetListDialog.open) return;
   const { pois, streets } = computeVisibleStreetListEntries();
@@ -4494,10 +4667,21 @@ function openStreetListDialog() {
     }
     streetListContent.appendChild(list);
   }
+  streetListPages = pageStreetListLines(buildStreetListPhysicalLines(pois, streets));
+  streetListPageIndex = 0;
+  sendStreetListPageToDevice();
   streetListDialog.showModal();
 }
 
 btnStreetListClose.addEventListener('click', () => streetListDialog.close());
+
+// § Visible Streets List — fires on every close path (Close button,
+// Escape, or the dots-1-6 combo below), so the map is put back on the
+// device exactly once no matter which one the user used, per the "keep the
+// map ready to display again when the list is dismissed" requirement.
+streetListDialog.addEventListener('close', () => {
+  if (currentDevice) sendGraphicToDevice(currentDevice);
+});
 
 const FORM_CONTROL_TAGS = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
 function isFormControlFocused() {
@@ -5016,11 +5200,15 @@ sdk.setCallBack(
   },
   (device, keyCode, msg) => {
     const byte6 = labelToByte6(msg || keyCode);
-    // § Visible Streets List — while the dialog is open, only the dots
-    // 1+2+3+4+5+6 "close everything" combo does anything; every other Dot
-    // Pad combo is suppressed, same reasoning as the keyboard guard above.
+    // § Visible Streets List — while the dialog is open, dots 4+5+6 / 1+2+3
+    // page the list (reusing the message window's own combos -- see
+    // showNextStreetListPage/showPreviousStreetListPage) and dots 1+2+3+4+
+    // 5+6 close it; every other Dot Pad combo is suppressed, same reasoning
+    // as the keyboard guard above.
     if (streetListDialog.open) {
       if (byte6 === 0x3F) streetListDialog.close();
+      else if (byte6 === 0x38) showNextStreetListPage();
+      else if (byte6 === 0x07) showPreviousStreetListPage();
       return;
     }
     // § Command / hotkey mapping — cursor: single dots 3/2/5/6.
