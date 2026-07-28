@@ -167,6 +167,7 @@
   </dialog>
 
   <dialog id="settings-dialog" aria-labelledby="settings-dialog-heading">
+    <button id="btn-settings-done" type="button">Done</button>
     <h3 id="settings-dialog-heading">Display Preferences</h3>
 
     <h4>Braille Options</h4>
@@ -178,7 +179,7 @@
         <option value="ueb2" selected>English Contracted</option>
       </select>
     </div>
-    <p>Choose which edges of the display show braille street labels.</p>
+    <h5>Choose which edges of the display show braille street labels.</h5>
     <div>
       <input type="checkbox" id="label-top">
       <label for="label-top">Top</label>
@@ -217,6 +218,11 @@
         <option value="1">1</option>
       </select>
     </div>
+    <div>
+      <input type="checkbox" id="settings-auto-simplify" checked>
+      <label for="settings-auto-simplify">Automatic simplification</label>
+      <p>When checked, smaller streets are automatically hidden or shown depending on map density.</p>
+    </div>
 
     <h4>Cursor</h4>
     <div>
@@ -229,8 +235,6 @@
         <option value="none">None</option>
       </select>
     </div>
-
-    <button id="btn-settings-done" type="button">Done</button>
   </dialog>
 
   <dialog id="help-dialog" aria-labelledby="help-dialog-heading">

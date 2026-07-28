@@ -360,6 +360,7 @@ const settingsBrailleCodeSelect = document.getElementById('settings-braille-code
 const settingsUnitsSelect = document.getElementById('settings-units');
 const settingsPanAmountSelect = document.getElementById('settings-pan-amount');
 const settingsCursorSoloTimeoutSelect = document.getElementById('settings-cursor-solo-timeout');
+const settingsAutoSimplifyCheckbox = document.getElementById('settings-auto-simplify');
 const btnSettingsDone = document.getElementById('btn-settings-done');
 const btnHelp = document.getElementById('menu-help');
 const helpDialog = document.getElementById('help-dialog');
@@ -427,8 +428,9 @@ let labelZones = { top: false, bottom: false, left: false, right: false };
 // localStorage, independent of sign-in (see tmap spec.md § Settings /
 // Accounts and Data). Covers exactly the five settings that already
 // survive a new anchor search unchanged (brailleCodeSetting, unitSystem,
-// panAmountFraction, labelZones, cursorSoloTimeoutSeconds) -- deliberately
-// NOT scaleIndex, since
+// panAmountFraction, labelZones, cursorSoloTimeoutSeconds,
+// autoSimplifyEnabled) -- deliberately NOT scaleIndex or mapComplexityIndex
+// itself, since
 // showAnchor already resets that to DEFAULT_SCALE_INDEX on every new
 // search regardless of any prior value, so persisting it would silently
 // do nothing (it'd load correctly, then get overwritten the instant a
@@ -470,6 +472,9 @@ function loadPersistedSettings() {
   if (stored.cursorSoloTimeoutSeconds === 'none' || [1, 2, 3, 5].includes(stored.cursorSoloTimeoutSeconds)) {
     cursorSoloTimeoutSeconds = stored.cursorSoloTimeoutSeconds;
   }
+  if (typeof stored.autoSimplifyEnabled === 'boolean') {
+    autoSimplifyEnabled = stored.autoSimplifyEnabled;
+  }
 }
 
 // Called after every change to one of the five persisted settings (see
@@ -484,7 +489,8 @@ function savePersistedSettings() {
       unitSystem,
       panAmountFraction,
       labelZones,
-      cursorSoloTimeoutSeconds
+      cursorSoloTimeoutSeconds,
+      autoSimplifyEnabled
     }));
   } catch (err) {
     // Ignored -- see comment above.
@@ -513,6 +519,12 @@ let hiddenStreetNames = new Set();
 // (see visibleWays(), which ANDs both filters). Reset to 0 ("All streets
 // and pathways") on a brand-new anchor.
 let mapComplexityIndex = 0;
+
+// § Auto Simplification — a lasting preference (persisted, like Braille
+// Translation/Units/Pan Amount/Cursor Solo Timeout below), not per-map
+// state -- unlike mapComplexityIndex itself, this is never reset on a new
+// anchor. Checked (on) by default.
+let autoSimplifyEnabled = true;
 
 // § Command / hotkey mapping — the 0 hotkey's "show only the cursor" mode.
 // A display-only override, not a real edit: when true, visibleWays()/
@@ -929,8 +941,13 @@ function setScaleIndex(newIndex) {
   if (newIndex === scaleIndex) return;
   scaleIndex = newIndex;
   scaleSelect.value = String(scaleIndex);
+  // § Auto Simplification — resolved against the new scale (getViewportBbox
+  // already reflects scaleIndex's new value at this point) before the one
+  // refreshMap() call below, so the map never flashes an intermediate
+  // complexity level.
+  const simplifyLabel = maybeAutoAdjustComplexity();
   refreshMap();
-  setMessage(formatScaleLabel(scaleIndex));
+  setMessage(simplifyLabel ? `${formatScaleLabel(scaleIndex)} ${simplifyLabel} visible.` : formatScaleLabel(scaleIndex));
 }
 
 scaleSelect.addEventListener('change', () => {
@@ -1044,6 +1061,7 @@ btnSettings.addEventListener('click', () => {
   settingsPanAmountSelect.value = String(panAmountFraction);
   settingsCursorSoloTimeoutSelect.value = String(cursorSoloTimeoutSeconds);
   for (const zone in labelCheckboxes) labelCheckboxes[zone].checked = labelZones[zone];
+  settingsAutoSimplifyCheckbox.checked = autoSimplifyEnabled;
   settingsDialog.showModal();
 });
 btnSettingsDone.addEventListener('click', () => settingsDialog.close());
@@ -1070,8 +1088,13 @@ settingsUnitsSelect.addEventListener('change', () => {
   unitSystem = settingsUnitsSelect.value;
   savePersistedSettings();
   refreshScaleOptions();
-  setMessage(`Units: ${unitSystem === 'metric' ? 'Metric' : 'Imperial'}`);
+  // § Auto Simplification — a Units switch re-renders the map at a new
+  // effective real-world footprint for the same scale index (see above),
+  // which can change density even though scaleIndex itself didn't move.
+  const simplifyLabel = maybeAutoAdjustComplexity();
   refreshMap();
+  const unitsLabel = `Units: ${unitSystem === 'metric' ? 'Metric' : 'Imperial'}`;
+  setMessage(simplifyLabel ? `${unitsLabel} ${simplifyLabel} visible.` : unitsLabel);
 });
 
 // § Pan Behavior / § Settings — a single shared fraction for both
@@ -1095,6 +1118,24 @@ settingsCursorSoloTimeoutSelect.addEventListener('change', () => {
   savePersistedSettings();
   setMessage(`Cursor solo timeout: ${settingsCursorSoloTimeoutSelect.selectedOptions[0].textContent}`);
   if (cursorOnlyMode) startCursorSoloTimer();
+});
+
+// § Auto Simplification — turning this on evaluates immediately at
+// whatever scale is currently showing (so it has a visible effect right
+// away rather than waiting for the next scale change); turning it off
+// never changes what's currently displayed, it just stops future
+// automatic adjustments until checked again.
+settingsAutoSimplifyCheckbox.addEventListener('change', () => {
+  autoSimplifyEnabled = settingsAutoSimplifyCheckbox.checked;
+  savePersistedSettings();
+  const stateLabel = `Automatic simplification: ${autoSimplifyEnabled ? 'on' : 'off'}.`;
+  if (autoSimplifyEnabled) {
+    const simplifyLabel = maybeAutoAdjustComplexity();
+    if (simplifyLabel) refreshMap();
+    setMessage(simplifyLabel ? `${stateLabel} ${simplifyLabel} visible.` : stateLabel);
+  } else {
+    setMessage(stateLabel);
+  }
 });
 
 // § Help — content lives in its own static file (help-content.html), not
@@ -1182,6 +1223,90 @@ function setMapComplexity(index) {
   refreshMap();
   const radio = editMapComplexityList.querySelector(`input[value="${index}"]`);
   if (radio) radio.checked = true;
+}
+
+// § Auto Simplification — how much raised-pixel density
+// (computeMapDensityPercent) is considered too cluttered to read
+// comfortably, confirmed via the experimental d/g density-inspection
+// hotkeys.
+const AUTO_SIMPLIFY_CRITICAL_PERCENT = 35;
+
+// § Auto Simplification — updates mapComplexityIndex and keeps the Edit
+// Map dialog's radio group in sync, the same way setMapComplexity does,
+// but deliberately doesn't announce a message or call refreshMap() itself
+// -- callers compose their own message by appending the standard
+// "[level] visible." text to whatever they're already announcing, and
+// call refreshMap() once themselves after the final level is resolved,
+// avoiding a double-render/flash of an intermediate level.
+function applyAutoComplexityIndex(index) {
+  if (index === mapComplexityIndex) return false;
+  mapComplexityIndex = index;
+  const radio = editMapComplexityList.querySelector(`input[value="${index}"]`);
+  if (radio) radio.checked = true;
+  return true;
+}
+
+// § Auto Simplification — the core algorithm: starting from fromIndex,
+// steps toward more simplification if density exceeds the critical value,
+// or toward less simplification (more detail) if it doesn't, re-checking
+// density at each step. One rule covers both directions the spec
+// originally described separately ("when increasing scale" / "when
+// decreasing scale"), since density is monotonic in complexity index --
+// each level's visible ways are a strict subset of the level before it
+// (see § Editing the Map), so simplifying further can only decrease-or-
+// hold density, and de-simplifying can only increase-or-hold it.
+//
+// Escalating toward more simplification stops -- before even checking its
+// density -- if the next candidate level would leave literally no street
+// visible in the CURRENT VIEWPORT specifically (reusing
+// wayIntersectsViewport, built for the Street Abbreviation Key feature),
+// not just "no street anywhere in the whole fetched square": a tier
+// cutoff can be non-empty overall but empty in what's actually panned
+// into view right now. In that case the last level that still showed a
+// street is kept, even though it exceeds the critical value -- never
+// picking a level that shows nothing at all.
+function resolveAutoComplexityIndex(fromIndex) {
+  const viewportBbox = getViewportBbox();
+  if (!viewportBbox) return fromIndex;
+
+  let index = fromIndex;
+  let density = computeMapDensityPercent(index);
+  if (density === null) return fromIndex;
+
+  if (density > AUTO_SIMPLIFY_CRITICAL_PERCENT) {
+    while (index < MAP_COMPLEXITY_LEVELS.length - 1) {
+      const nextIndex = index + 1;
+      const hasVisibleStreet = visibleWays(nextIndex).some((way) => wayIntersectsViewport(way, viewportBbox));
+      if (!hasVisibleStreet) break;
+      index = nextIndex;
+      density = computeMapDensityPercent(index);
+      if (density <= AUTO_SIMPLIFY_CRITICAL_PERCENT) break;
+    }
+  } else {
+    while (index > 0) {
+      const candidateIndex = index - 1;
+      const candidateDensity = computeMapDensityPercent(candidateIndex);
+      if (candidateDensity > AUTO_SIMPLIFY_CRITICAL_PERCENT) break;
+      index = candidateIndex;
+    }
+  }
+  return index;
+}
+
+// § Auto Simplification — the single entry point every trigger (a new
+// anchor search, a scale change, a Units change, and enabling the setting
+// itself) calls. No-op (returns null, nothing changes) if the setting is
+// off, Cursor Only mode is active (density reads near-zero with
+// everything hidden -- not a meaningful reading), or no map is loaded.
+// Returns the new level's label if a change was actually applied (for the
+// caller to append to its own message), or null otherwise -- callers
+// never call refreshMap()/setMessage from in here; they compose their own
+// message and re-render once, after this resolves the final level.
+function maybeAutoAdjustComplexity() {
+  if (!autoSimplifyEnabled || cursorOnlyMode || !lastBbox) return null;
+  const resolvedIndex = resolveAutoComplexityIndex(mapComplexityIndex);
+  const changed = applyAutoComplexityIndex(resolvedIndex);
+  return changed ? MAP_COMPLEXITY_LEVELS[resolvedIndex].label : null;
 }
 
 // § Command / hotkey mapping — the 0 hotkey (also dots 3+5+6 on the Dot
@@ -2889,9 +3014,13 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   btnEditMap.removeAttribute('aria-disabled');
   btnDropPin.disabled = false;
   btnDownloadSvg.removeAttribute('aria-disabled');
+  // § Auto Simplification — resolved at the default scale before the one
+  // refreshMap() call below, so even the very first view of a dense area
+  // is already appropriately simplified, with no flash of the wrong level.
+  const simplifyLabel = maybeAutoAdjustComplexity();
   refreshMap();
 
-  setMessage(compactedName);
+  setMessage(simplifyLabel ? `${compactedName} ${simplifyLabel} visible.` : compactedName);
 }
 
 function clamp(value, min, max) {
@@ -3999,15 +4128,20 @@ function visiblePois() {
 }
 
 // § Editing the Map — lastWays minus any manually-hidden street/pathway
-// name, ANDed with the current Map Complexity cutoff (mapComplexityIndex).
+// name, ANDed with a Map Complexity cutoff (mapComplexityIndex by default).
 // These are two independent filters, not one merged set: a manually-hidden
 // street stays hidden at every complexity level, and raising/lowering
 // complexity never touches hiddenStreetNames. lastWays itself stays
 // unfiltered for the same reason as visiblePois() above. cursorOnlyMode
 // short-circuits this the same way it does visiblePois().
-function visibleWays() {
+// § Auto Simplification — the optional complexityIndex parameter lets
+// resolveAutoComplexityIndex evaluate a hypothetical level's visible ways
+// (for density-testing candidates) without touching the real
+// mapComplexityIndex; every existing caller omits it and gets today's
+// behavior unchanged.
+function visibleWays(complexityIndex = mapComplexityIndex) {
   if (cursorOnlyMode) return [];
-  const maxTier = MAP_COMPLEXITY_LEVELS[mapComplexityIndex].maxTier;
+  const maxTier = MAP_COMPLEXITY_LEVELS[complexityIndex].maxTier;
   return lastWays.filter((way) =>
     !hiddenStreetNames.has(way.tags && way.tags.name) &&
     way.tier <= maxTier
@@ -5169,12 +5303,16 @@ function sendGraphicToDevice(device, { skipClear = false } = {}) {
 // real-time inspection tool for comparing candidate density metrics
 // (see Issue discussion) -- nothing here drives any automatic
 // simplification.
-function computeMapDensityPercent() {
+// § Auto Simplification — the optional complexityIndex parameter lets
+// resolveAutoComplexityIndex evaluate a hypothetical level's density
+// (before committing to it) without touching the real mapComplexityIndex;
+// the d hotkey's own call omits it and gets today's behavior unchanged.
+function computeMapDensityPercent(complexityIndex = mapComplexityIndex) {
   const viewportBbox = getViewportBbox();
   if (!viewportBbox) return null;
   const b = mapGridBounds();
   const cursor = cursorGridPosition(viewportBbox);
-  const pixels = rasterizeMapToPixels(viewportBbox, visibleWays(), lastAnchorLat, lastAnchorLon, DOT_GRID_WIDTH, DOT_GRID_HEIGHT, cursor);
+  const pixels = rasterizeMapToPixels(viewportBbox, visibleWays(complexityIndex), lastAnchorLat, lastAnchorLon, DOT_GRID_WIDTH, DOT_GRID_HEIGHT, cursor);
   let raised = 0;
   for (let y = b.offsetY; y < b.offsetY + b.height; y++) {
     for (let x = b.offsetX; x < b.offsetX + b.width; x++) {
