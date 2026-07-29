@@ -252,6 +252,16 @@ let panAmountFraction = 0.25;
 // a temporal-dead-zone ReferenceError reading this before its own
 // initializer ran. See startCursorSoloTimer/clearCursorSoloTimer below.
 let cursorSoloTimeoutSeconds = 2;
+
+// § Auto Simplification — same early-declaration reasoning as
+// cursorSoloTimeoutSeconds directly above: loadPersistedSettings() reads
+// this at module load, before its original declaration site (near
+// mapComplexityIndex) would have run, which throws the same
+// temporal-dead-zone ReferenceError. A lasting preference (persisted, like
+// Braille Translation/Units/Pan Amount/Cursor Solo Timeout), not per-map
+// state -- unlike mapComplexityIndex itself, this is never reset on a new
+// anchor. Checked (on) by default.
+let autoSimplifyEnabled = true;
 let cursorSoloTimeoutHandle = null;
 
 // § Street importance tiers — every way gets tagged with a tier in
@@ -526,12 +536,6 @@ let hiddenStreetNames = new Set();
 // (see visibleWays(), which ANDs both filters). Reset to 0 ("All streets
 // and pathways") on a brand-new anchor.
 let mapComplexityIndex = 0;
-
-// § Auto Simplification — a lasting preference (persisted, like Braille
-// Translation/Units/Pan Amount/Cursor Solo Timeout below), not per-map
-// state -- unlike mapComplexityIndex itself, this is never reset on a new
-// anchor. Checked (on) by default.
-let autoSimplifyEnabled = true;
 
 // § Command / hotkey mapping — the 0 hotkey's "show only the cursor" mode.
 // A display-only override, not a real edit: when true, visibleWays()/
