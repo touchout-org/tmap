@@ -13,6 +13,16 @@ service cloud.firestore {
     match /users/{userId}/savedMaps/{docId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
+    // overpassLogs — one row per live Overpass query (see logOverpassQuery
+    // in app.js), written by every visitor's session (real or anonymous --
+    // see the onAuthStateChanged anonymous-sign-in wiring) purely for
+    // usage/reliability analytics. Create-only: clients never read, update,
+    // or delete this collection, and can only write a row tagged with
+    // their own uid, not someone else's.
+    match /overpassLogs/{docId} {
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if false;
+    }
     match /{document=**} {
       allow read, write: if false;
     }
