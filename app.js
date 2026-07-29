@@ -705,6 +705,67 @@ function loadPersistedCurrentMap() {
   }
 }
 
+// § My Archives — the current map's raw Overpass ways, cached locally via
+// IndexedDB (too large and too slow to JSON.stringify/parse on every
+// change for localStorage, unlike the small metadata record above) so a
+// page reload can restore the current map without re-fetching from
+// Overpass. A single slot, not a general cache: written every time the
+// current map's ways change (see showAnchor) and read once at startup.
+// Deliberately no staleness check -- a hit is used regardless of age (the
+// user can always search again to force a live refresh). Map History and
+// Saved Maps entries never read this -- see loadMapRecord's cachedWays
+// parameter -- so this can never show stale data anywhere except the
+// exact map already on screen when the page reloads.
+const WAYS_CACHE_DB_NAME = 'dottmap-ways-cache';
+const WAYS_CACHE_STORE = 'currentMapWays';
+const WAYS_CACHE_KEY = 'current';
+
+function openWaysCacheDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(WAYS_CACHE_DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(WAYS_CACHE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// Failure (storage disabled/unavailable, quota exceeded, etc.) is silently
+// swallowed -- same convention as savePersistedSettings/saveCurrentMapLocally
+// above: this is a convenience cache, not something to surface an error for.
+async function saveCurrentMapWaysLocally(ways) {
+  try {
+    const db = await openWaysCacheDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(WAYS_CACHE_STORE, 'readwrite');
+      tx.objectStore(WAYS_CACHE_STORE).put(ways, WAYS_CACHE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch (err) {
+    // Ignored -- see comment above.
+  }
+}
+
+// Returns null on any miss or failure (no cached entry, corrupted DB,
+// storage unavailable) -- the caller's job is just to fall back to a live
+// Overpass fetch, exactly like before this cache existed.
+async function loadCurrentMapWaysLocally() {
+  try {
+    const db = await openWaysCacheDb();
+    const ways = await new Promise((resolve, reject) => {
+      const tx = db.transaction(WAYS_CACHE_STORE, 'readonly');
+      const req = tx.objectStore(WAYS_CACHE_STORE).get(WAYS_CACHE_KEY);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return Array.isArray(ways) ? ways : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 // § Browser check
 function isChrome() {
   const ua = navigator.userAgent;
@@ -1512,16 +1573,26 @@ async function createNewAnchor(displayName, shortName, lat, lon, query, country)
 // Complexity/cursor-only/scale/braille aren't part of a record, so they
 // come out exactly as showAnchor's normal reset leaves them -- correct,
 // since those are display preferences, not map data.
-async function loadMapRecord(record) {
+//
+// cachedWays, if given, skips the Overpass fetch entirely -- only the
+// startup current-map restore (see bottom of file) ever passes this;
+// Map History and Saved Maps entries always call this with no second
+// argument, so they always fetch live, regardless of what's sitting in
+// the current-map ways cache.
+async function loadMapRecord(record, cachedWays) {
   const bbox = squareBoundingBox(record.anchorLat, record.anchorLon, POI_DISTANCE_THRESHOLD_MILES);
   let ways;
-  try {
-    // No fresh geocode result here (this is a saved-map reload, not a new
-    // search) -- overpassLogs' country field is left null for this call.
-    ways = await fetchWays(bbox, record.searchQuery, null);
-  } catch (err) {
-    setMessage(humanizeOsmError(err, 'street-data'));
-    return;
+  if (cachedWays) {
+    ways = cachedWays;
+  } else {
+    try {
+      // No fresh geocode result here (this is a saved-map reload, not a new
+      // search) -- overpassLogs' country field is left null for this call.
+      ways = await fetchWays(bbox, record.searchQuery, null);
+    } catch (err) {
+      setMessage(humanizeOsmError(err, 'street-data'));
+      return;
+    }
   }
   archiveOutgoingMapIfNeeded();
   lastSearchQuery = record.searchQuery || null;
@@ -3040,6 +3111,7 @@ function showAnchor(displayName, shortName, lat, lon, bbox, ways) {
   lastBbox = bbox;
   lastRawWays = ways;
   lastWays = processWays(lastRawWays);
+  saveCurrentMapWaysLocally(lastRawWays);
   lastAnchorLat = lat;
   lastAnchorLon = lon;
   // § Feature name compacting — compacted once here at creation time
@@ -5549,6 +5621,12 @@ sdk.setCallBack(
 
 // § My Archives — restore the current map from local storage on startup,
 // if one exists, so a page reload doesn't lose an in-progress map. Uses
-// the same restore path as loading a Recent/Saved Maps entry.
+// the same restore path as loading a Recent/Saved Maps entry, but first
+// checks the local ways cache (see loadCurrentMapWaysLocally) -- a hit
+// skips Overpass entirely; a miss (or a corrupted/unavailable cache) falls
+// through to loadMapRecord's normal live fetch, exactly as before this
+// cache existed.
 const persistedCurrentMap = loadPersistedCurrentMap();
-if (persistedCurrentMap) loadMapRecord(persistedCurrentMap);
+if (persistedCurrentMap) {
+  loadCurrentMapWaysLocally().then((cachedWays) => loadMapRecord(persistedCurrentMap, cachedWays || undefined));
+}
