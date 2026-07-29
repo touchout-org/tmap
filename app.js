@@ -10,7 +10,6 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
-  signInAnonymously,
   signOut,
   onAuthStateChanged,
   connectAuthEmulator
@@ -35,12 +34,6 @@ import {
 // evaluate whether it's more reliable for POI/business-name searches; street
 // data is still Overpass.
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-
-// § Analytics — bump this on every deploy so overpassLogs rows (see
-// logOverpassQuery) can be correlated with which version of the app
-// produced them, e.g. to check whether a later change to fetchWays
-// actually improved reliability. Free-form string, not machine-parsed.
-const BUILD_ID = '2026-07-29';
 
 // Client-side Maps Platform key: not secret -- protected by the API
 // restriction (Maps JavaScript API + Places API only) and the website
@@ -1412,13 +1405,9 @@ async function proceedWithPlace(place, query) {
   const lon = parseFloat(place.lon);
   const displayName = formatPlaceName(place);
   const shortName = formatShortAddress(place);
-  // § Analytics — carried through to fetchWays() purely for the
-  // overpassLogs country field (see logOverpassQuery). Not available for a
-  // loadMapRecord reload, since that has no fresh geocode result.
-  const country = (place.address && place.address.country) || null;
 
   if (!hasAnchor) {
-    await createNewAnchor(displayName, shortName, lat, lon, query, country);
+    await createNewAnchor(displayName, shortName, lat, lon, query);
     return;
   }
 
@@ -1430,7 +1419,7 @@ async function proceedWithPlace(place, query) {
   const thresholdFt = (POI_DISTANCE_THRESHOLD_MILES * MILES_TO_METERS) / FEET_TO_METERS;
 
   if (distFt > thresholdFt) {
-    promptTooFarPoi(displayName, shortName, lat, lon, distFt, query, country);
+    promptTooFarPoi(displayName, shortName, lat, lon, distFt, query);
     return;
   }
 
@@ -1476,11 +1465,11 @@ btnDidYouMeanCancel.addEventListener('click', () => {
 // name) is used only for the on-screen title and heading; shortName (street
 // address only) is what's spoken/brailled everywhere else -- see
 // formatShortAddress.
-async function createNewAnchor(displayName, shortName, lat, lon, query, country) {
+async function createNewAnchor(displayName, shortName, lat, lon, query) {
   const bbox = squareBoundingBox(lat, lon, POI_DISTANCE_THRESHOLD_MILES);
   let ways;
   try {
-    ways = await fetchWays(bbox, query, country);
+    ways = await fetchWays(bbox, query);
   } catch (err) {
     setMessage(humanizeOsmError(err, 'street-data'));
     return;
@@ -1512,9 +1501,7 @@ async function loadMapRecord(record) {
   const bbox = squareBoundingBox(record.anchorLat, record.anchorLon, POI_DISTANCE_THRESHOLD_MILES);
   let ways;
   try {
-    // No fresh geocode result here (this is a saved-map reload, not a new
-    // search) -- overpassLogs' country field is left null for this call.
-    ways = await fetchWays(bbox, record.searchQuery, null);
+    ways = await fetchWays(bbox, record.searchQuery);
   } catch (err) {
     setMessage(humanizeOsmError(err, 'street-data'));
     return;
@@ -1594,8 +1581,8 @@ async function archiveOutgoingMapIfNeeded() {
 // POI]. That's too far away for a single map." Confirming discards the
 // current map and makes the new location the anchor; cancelling leaves the
 // current map untouched.
-function promptTooFarPoi(displayName, shortName, lat, lon, distFt, query, country) {
-  pendingFarPoi = { displayName, shortName, lat, lon, query, country };
+function promptTooFarPoi(displayName, shortName, lat, lon, distFt, query) {
+  pendingFarPoi = { displayName, shortName, lat, lon, query };
   poiTooFarMessage.textContent =
     `The new location is ${formatDistance(distFt)} away from ${lastAnchorName}. ` +
     `That's too far away for a single map.`;
@@ -1607,7 +1594,7 @@ btnPoiShowAnyway.addEventListener('click', () => {
   poiTooFarDialog.close();
   const pending = pendingFarPoi;
   pendingFarPoi = null;
-  if (pending) createNewAnchor(pending.displayName, pending.shortName, pending.lat, pending.lon, pending.query, pending.country);
+  if (pending) createNewAnchor(pending.displayName, pending.shortName, pending.lat, pending.lon, pending.query);
 });
 btnPoiCancel.addEventListener('click', () => {
   poiTooFarDialog.close();
@@ -2492,22 +2479,9 @@ function updateAuthUI(user) {
   }
 }
 
-// § Analytics — every visitor gets a silent, promptless anonymous Firebase
-// session so overpassLogs (see logOverpassQuery) has a uid to attribute
-// queries to without requiring sign-in. currentUser/updateAuthUI must
-// stay blind to this: an anonymous session is deliberately filtered out
-// here (isAnonymous check) so it never counts as "signed in" for Login/
-// Logout or the Firestore-backed My Archives sections, which still mean
-// a real Google account exactly as before. Only fires signInAnonymously
-// when there's no session at all -- never overrides an existing real
-// sign-in, and signing out (btnLogout below) naturally lands back here
-// with user=null, which re-establishes a fresh anonymous session.
 onAuthStateChanged(auth, (user) => {
-  currentUser = user && !user.isAnonymous ? user : null;
-  updateAuthUI(currentUser);
-  if (!user) {
-    signInAnonymously(auth).catch((err) => console.error('anonymous sign-in failed:', err));
-  }
+  currentUser = user;
+  updateAuthUI(user);
 });
 
 btnLogin.addEventListener('click', async () => {
@@ -2888,38 +2862,15 @@ function formatDistance(distFt) {
   return distFt <= 1000 ? `${Math.round(distFt)} ft` : `${(distFt / FEET_PER_MILE).toFixed(1)} mi`;
 }
 
-// § Analytics — one row per live Overpass query (never for local
-// test-data cache hits, see fetchWays' early-return below -- no real
-// network call happened, so there's nothing to measure), so query volume,
-// per-user counts, and reliability can be estimated over time without
-// requiring sign-in (see uid below). Never blocks or fails the caller: a
-// logging failure is swallowed here, same "never fail the user over a
-// side channel" principle as the rest of the app applies to its actual
-// features. country/errorType are whatever the caller has on hand -- null
-// is a valid, expected value for both (see call sites), not a bug.
-function logOverpassQuery({ elapsedMs, errorType, country }) {
-  addDoc(collection(db, 'overpassLogs'), {
-    uid: auth.currentUser ? auth.currentUser.uid : null,
-    timestamp: serverTimestamp(),
-    elapsedMs,
-    errorType,
-    country: country || null,
-    buildId: BUILD_ID
-  }).catch((err) => console.error('overpass log write failed:', err));
-}
-
 // § Data ingestion and cleaning pipeline, step 2 (Fetch). searchQuery is the
 // original user-typed search text (not the Overpass QL below) -- passed
 // through purely so this can be matched against the local test data cache,
-// same key geocode() uses for the same search. country is purely for
-// logOverpassQuery's analytics row below -- see call sites for where it
-// does/doesn't have a real value.
-async function fetchWays(bbox, searchQuery, country) {
+// same key geocode() uses for the same search.
+async function fetchWays(bbox, searchQuery) {
   const cached = await loadLocalTestData(searchQuery);
   if (cached) return cached.ways;
 
   const overpassQuery = `[out:json][timeout:25];way["highway"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});out geom;`;
-  const fetchStart = Date.now();
   let res;
   try {
     res = await fetch(OVERPASS_URL, {
@@ -2927,24 +2878,15 @@ async function fetchWays(bbox, searchQuery, country) {
       body: 'data=' + encodeURIComponent(overpassQuery)
     });
   } catch (err) {
-    logOverpassQuery({ elapsedMs: Date.now() - fetchStart, errorType: 'network', country });
     throw new OsmFetchError('network');
   }
-  if (!res.ok) {
-    const kind = classifyHttpFailure(res.status);
-    logOverpassQuery({ elapsedMs: Date.now() - fetchStart, errorType: kind, country });
-    throw new OsmFetchError(kind, res.status);
-  }
+  if (!res.ok) throw new OsmFetchError(classifyHttpFailure(res.status), res.status);
   const data = await res.json();
   // Overpass can return HTTP 200 with an empty/partial result and a
   // `remark` field describing a server-side failure (e.g. a query timeout)
   // -- this wouldn't trip res.ok at all, and used to render as a silent
   // "no streets here" instead of surfacing the real cause.
-  if (data.remark) {
-    logOverpassQuery({ elapsedMs: Date.now() - fetchStart, errorType: 'timeout', country });
-    throw new OsmFetchError('timeout');
-  }
-  logOverpassQuery({ elapsedMs: Date.now() - fetchStart, errorType: null, country });
+  if (data.remark) throw new OsmFetchError('timeout');
   return data.elements || [];
 }
 
