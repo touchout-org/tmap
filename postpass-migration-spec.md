@@ -449,6 +449,11 @@ in place *before* development starts, not retrofitted afterward:
   suffixed key names (e.g. `dottmap-settings-dev`,
   `dottmap-current-map-dev`, a distinct ways-cache database name),
   gated on which build is running — not a manual step to remember.
+  **Confirmed working 2026-07-31** — shipped as part of the environment
+  setup, verified live (a fresh `tmapdev` load doesn't restore `tmap`'s
+  old shared current-map, confirmed via a real Chrome tab reading
+  `localStorage`/`indexedDB.databases()` directly), and independently
+  re-confirmed by Josh testing both read and write paths himself.
 - **An unmistakable `buildId` prefix** — e.g. `tmapdev-2026-07-30`
   instead of the plain date string `tmap` uses — so `tmapdev`'s test
   traffic is self-evidently separable from real production traffic in
@@ -480,7 +485,38 @@ Postpass (see §4.3's table). Not a blocker for Phase 1, but Phase 3's
 real-service retry test is still where that classification gets its
 first real exercise.
 
-**Phase 1 — Pure functions, no integration**
+**Phase 1 — Pure functions, no integration — DONE 2026-07-31**
+Wrote `buildPostpassQuery()`, `flattenMultiLineString()`,
+`adaptPostpassResponse()`, `checkPostpassSoftFailure()`,
+`fetchPostpassOnce()`, and `fetchFromPostpassWithRetry()` in
+`tmapdev/app.js`, right after the existing (unmodified) `fetchWays()` --
+nothing calls them yet. Also extended `classifyHttpFailure()` with a
+`malformed` kind for HTTP 400 (shared with Overpass's existing path, and
+added its user-facing message to `OSM_ERROR_MESSAGES` immediately, since
+that function is already live in production), and gave
+`logOverpassQuery()` default `dataSource='overpass'`/`attempt=1`/
+`requestId=null` parameters so the existing Overpass call sites need no
+edits to keep a consistent schema.
+
+Verified the adapter against real data: queried both services for the
+same Berkeley/Hearst bbox. 339 Overpass ways vs. 342 Postpass ways, tier
+histograms matching within the same small margin, 66 vs. 67 distinct
+street names with only one name present in Postpass but not Overpass
+("Milvia Street") -- consistent with ordinary mirror lag, not an adapter
+bug. A sample adapted way's shape (type/id/tags/geometry) matched
+exactly what `processWays()` and rendering expect.
+
+Verified the retry loop's mechanics with a mocked `fetch`, using the
+exact function as written (not a re-derivation): an always-failing mock
+gave up after 18 attempts at 23,671ms, within budget; a mock that hangs
+20s per call (far past the 8s cap) was correctly cut off near 8s each
+time, fitting exactly 3 attempts into the 25s window before giving up;
+a mocked HTTP 400 stopped after exactly 1 attempt in 1ms, confirming
+`malformed` isn't retried.
+
+Original text below, retained for what Phase 1 was scoped to do (see
+above for what actually happened):
+
 Write `buildPostpassQuery()`, `adaptPostpassResponse()`, the
 soft-failure check, and `fetchFromPostpassWithRetry()` (§4.4) as
 standalone functions. Verify the adapter by hand: take a real Overpass
@@ -495,29 +531,62 @@ long-hung attempt doesn't consume the whole budget (the 8s per-attempt
 cap kicks in), and confirm a non-retryable failure kind stops
 immediately rather than burning through backoff attempts.
 
-**Phase 2 — Integrate behind the flag, default off**
-Wire `DATA_SOURCE` into `fetchWays()`. Mergeable and deployable with zero
-behavior change while the flag stays `'overpass'`.
+**Phase 2 — Integrate behind the flag, default off — DONE 2026-07-31**
+Wired `DATA_SOURCE` into `fetchWays()`. Deployed to `tmapdev` with the
+flag at its default (`'overpass'`) and confirmed live: a real search
+went through the new branch, correctly skipped it, and completed a
+genuine Overpass fetch exactly as before (title updated to "1516 Hearst
+Avenue, Berkeley, California, 94703", no console errors beyond an
+unrelated browser-extension artifact). Zero behavior change confirmed,
+not just assumed from the diff being small.
 
-**Phase 3 — Local verification with the flag on**
-Using a local static server (not the sandboxed test harness that's
-proven unreliable for this app — verify against a real browser), with
-realistic persisted `localStorage`/IndexedDB state, not a fresh profile:
-run all 4 known benchmark locations plus at least one new one. Confirm
-not just "no exception" but **visual/structural correctness** — way
-count, street names rendered, tier/Auto-Simplification behavior, label
-assignment, SVG export — since a subtly wrong adapter (e.g. swapped lat/
-lon order) could render a garbled map without throwing any error at all.
-This is the primary new risk this migration introduces that the earlier
-two incidents didn't have: a silent-wrong-data failure mode, not a loud
-crash. Also confirm the retry loop end to end against the real service:
-temporarily point it at a bad URL or block the request to force real
-failures, and check that (a) multiple attempt rows land in
-`overpassLogs` with the same `requestId` and increasing `attempt`
-numbers, (b) the search eventually still fails gracefully with the
-existing user-facing message once the 25s budget is spent, and (c) a
-normal, healthy request still completes in roughly the same time as
-today (i.e. the retry machinery adds no overhead on the happy path).
+**Phase 3 — Local verification with the flag on — DONE 2026-08-01**
+Using a local static server (`python -m http.server`, not the sandboxed
+test harness that's proven unreliable for this app — verified against a
+real Chrome tab instead) with `DATA_SOURCE` temporarily flipped to
+`'postpass'` locally (never committed at that value).
+
+**Found and fixed a real bug on the very first search**, exactly the
+kind of thing this phase exists to catch: `fetchPostpassOnce` posted to
+Postpass with no `Content-Type` header, so the browser defaulted to
+`text/plain`. Postpass couldn't parse the `data=` field and returned
+HTTP 400 (`"no query field given"`), which the app correctly classified
+as `malformed` — every single query failed this way, 100% of the time,
+regardless of location. Confirmed root cause directly (`curl` with vs.
+without `Content-Type: application/x-www-form-urlencoded` against the
+identical query — 400 vs. a valid 200 FeatureCollection). The benchmark
+script (`admin/benchmark/overpass-vs-postpass.mjs`) already set this
+header correctly, which is why Phase 0's testing never surfaced it — the
+gap was specifically between the verified-working script and the
+never-actually-exercised app code, which is exactly why code review and
+isolated-function testing (Phase 1) didn't catch it either. Fixed by
+adding the header ([app.js](app.js) `fetchPostpassOnce`); this is the
+one change from this phase that stays in the codebase.
+
+With the fix in place, re-verified all 4 known benchmark locations plus
+one new one (560 Riverside Dr, New York — chosen for its numbered/
+directional/ordinal street names). For each, opened the Street
+Abbreviation Key and confirmed **real, geographically correct street
+names** (e.g. California St/Jackson St/Pacific Ave for the SF anchor;
+West 125th–133rd St/Broadway/Riverside Dr for the Harlem anchor,
+including the documented `"West 134th Street (upper)"` → `w34` collision
+case actually occurring in real data) — ruling out the silent-wrong-data
+risk (a lat/lon swap would have produced nonsense streets in the wrong
+place, not this). SVG export verified too (`Download SVG` on the Harlem
+anchor): valid SVG, correct `data-name`/`data-stem`/`data-type`/
+`data-label`/`data-highway`/`data-tier` per street group, correct 3x3
+POI marker.
+
+Retry loop verified end to end by temporarily pointing `POSTPASS_URL` at
+an unroutable address (`10.255.255.1`, never committed) and reading the
+real `overpassLogs` rows back afterward (via a throwaway read-only
+script using the existing `overpass-stats-reader` service account, same
+approach as `admin/overpass-stats/`): a single `requestId` logged 4 rows
+with `attempt` 1→4, error kinds `timeout`/`timeout`/`network`/`timeout`,
+spanning ~24.9s total — right at the 25s budget — before the search
+failed with the existing "query took too long" message. The 5 healthy
+searches above each logged a single `attempt: 1` row at ~1.2–1.7s,
+confirming the retry machinery adds no overhead on the happy path.
 
 **Phase 4 — Merge back into `tmap`, then a soft production rollout**
 This is the point where the finished, `tmapdev`-validated work actually
